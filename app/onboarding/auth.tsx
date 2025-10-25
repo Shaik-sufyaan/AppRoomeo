@@ -8,12 +8,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Alert,
 } from "react-native";
 import { useRouter, Stack } from "expo-router";
 import colors from "@/constants/colors";
 import { typography } from "@/constants/typography";
 import { spacing, borderRadius } from "@/constants/spacing";
 import Button from "@/components/Button";
+import { signUp, signIn } from "@/lib/auth";
 
 type AuthMode = "signin" | "signup";
 
@@ -23,17 +25,44 @@ export default function AuthScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleAuth = () => {
-    // TODO: Implement actual authentication with Supabase
-    // For now, just simulate the flow
+  const handleAuth = async () => {
+    setIsLoading(true);
 
-    if (mode === "signup") {
-      // New account - go to user type selection
-      router.push("/onboarding/user-type");
-    } else {
-      // Existing account - go directly to main app
-      router.replace("/(tabs)/matches");
+    try {
+      if (mode === "signup") {
+        // Sign up new user
+        const result = await signUp({ email, password });
+
+        // Check if email confirmation is required
+        if (result.user && !result.session) {
+          Alert.alert(
+            "Check Your Email",
+            "Please check your email and click the confirmation link to continue.",
+            [{ text: "OK" }]
+          );
+          setIsLoading(false);
+          return;
+        }
+
+        // If we have a session, proceed to user type selection
+        if (result.session) {
+          router.push("/onboarding/user-type");
+        }
+      } else {
+        // Sign in existing user
+        await signIn({ email, password });
+        // Existing account - go directly to main app
+        router.replace("/(tabs)/matches");
+      }
+    } catch (error: any) {
+      Alert.alert(
+        "Authentication Error",
+        error.message || "Something went wrong. Please try again."
+      );
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -133,7 +162,7 @@ export default function AuthScreen() {
               onPress={handleAuth}
               size="large"
               fullWidth
-              disabled={!isFormValid()}
+              disabled={!isFormValid() || isLoading}
               testID="auth-button"
             />
 

@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   Switch,
+  Alert,
 } from "react-native";
 import { useRouter, Stack } from "expo-router";
 import { Camera } from "lucide-react-native";
@@ -15,12 +16,16 @@ import { spacing, borderRadius } from "@/constants/spacing";
 import Input from "@/components/Input";
 import Avatar from "@/components/Avatar";
 import { useApp } from "@/contexts/AppContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { User } from "@/types";
+import { createProfile } from "@/lib/profiles";
+import { supabase } from "@/lib/supabase";
 
 export default function ProfileScreen() {
   const router = useRouter();
   const { completeOnboarding } = useApp();
-  
+  const { user, onboardingData, clearOnboardingData } = useAuth();
+
   const [name, setName] = useState("");
   const [age, setAge] = useState("");
   const [college, setCollege] = useState("");
@@ -29,24 +34,93 @@ export default function ProfileScreen() {
   const [pets, setPets] = useState(false);
   const [hasPlace, setHasPlace] = useState(false);
   const [about, setAbout] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleComplete = async () => {
-    const user: User = {
-      id: Date.now().toString(),
-      name,
-      age: parseInt(age, 10),
-      college,
-      workStatus,
-      smoker,
-      pets,
-      hasPlace,
-      about,
-      photos: ["https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"],
-      roomPhotos: hasPlace ? ["https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800"] : [],
-    };
+    setIsLoading(true);
 
-    await completeOnboarding(user);
-    router.replace("/matches");
+    try {
+      // First check if we have a session
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        Alert.alert("Session Error", `Failed to get session: ${sessionError.message}`);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!session) {
+        Alert.alert(
+          "No Active Session",
+          "Your session has expired. Please sign in again.",
+          [
+            {
+              text: "OK",
+              onPress: () => router.replace("/onboarding/auth")
+            }
+          ]
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      // Get current user from Supabase
+      const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
+
+      if (userError) {
+        Alert.alert("User Error", `Failed to get user: ${userError.message}`);
+        setIsLoading(false);
+        return;
+      }
+
+      if (!currentUser) {
+        Alert.alert("Error", "No user found. Please sign in again.");
+        setIsLoading(false);
+        return;
+      }
+
+      // Save profile to Supabase
+      await createProfile({
+        id: currentUser.id,
+        user_type: onboardingData.userType,
+        name,
+        age: parseInt(age, 10),
+        college: college || null,
+        work_status: workStatus,
+        smoker,
+        pets,
+        has_place: hasPlace,
+        about: about || null,
+        photos: ["https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"],
+        room_photos: hasPlace ? ["https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800"] : [],
+      });
+
+      // Also save to local context for app functionality
+      const localUser: User = {
+        id: currentUser.id,
+        name,
+        age: parseInt(age, 10),
+        college,
+        workStatus,
+        smoker,
+        pets,
+        hasPlace,
+        about,
+        photos: ["https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"],
+        roomPhotos: hasPlace ? ["https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800"] : [],
+      };
+
+      await completeOnboarding(localUser);
+      clearOnboardingData();
+      router.replace("/matches");
+    } catch (error: any) {
+      Alert.alert(
+        "Error",
+        error.message || "Failed to create profile. Please try again."
+      );
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const isValid = name.trim() && age && parseInt(age, 10) > 0;
@@ -190,15 +264,15 @@ export default function ProfileScreen() {
         </View>
 
         <TouchableOpacity
-          style={[styles.completeButton, !isValid && styles.disabledButton]}
+          style={[styles.completeButton, (!isValid || isLoading) && styles.disabledButton]}
           onPress={handleComplete}
-          disabled={!isValid}
+          disabled={!isValid || isLoading}
           testID="complete-profile-button"
         >
           <Text
-            style={[styles.completeText, !isValid && styles.disabledText]}
+            style={[styles.completeText, (!isValid || isLoading) && styles.disabledText]}
           >
-            COMPLETE PROFILE
+            {isLoading ? "CREATING PROFILE..." : "COMPLETE PROFILE"}
           </Text>
         </TouchableOpacity>
       </ScrollView>

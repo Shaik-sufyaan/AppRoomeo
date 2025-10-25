@@ -49,18 +49,18 @@
 
 1. In your Supabase Dashboard, click **SQL Editor** in the left sidebar
 2. Click **New Query**
-3. Open the file: `/supabase/setup.sql` from your project
+3. Open the file: `supabase/migrations/20250125_create_profiles.sql` from your project
 4. Copy the **entire content** of that file
 5. Paste it into the SQL Editor
 6. Click **Run** (or press Ctrl/Cmd + Enter)
 7. You should see: **"Success. No rows returned"** ✅
 
 This creates:
-- `profiles` table
-- Custom types (`work_status`, `user_type`)
-- Security policies
-- Helper functions
-- Triggers
+- `profiles` table with all user data fields
+- Indexes for better query performance
+- Row Level Security (RLS) policies
+- Automatic timestamp updates
+- Constraints for data validation
 
 ---
 
@@ -173,13 +173,16 @@ Environment variables are only loaded when Expo starts!
 
 ## 📱 Next Steps
 
-Now you can integrate Supabase into your auth screens:
+✅ **Authentication is already integrated!** The following has been completed:
 
-1. **Update `auth.tsx`** - Use `supabase.auth.signUp()` and `supabase.auth.signInWithPassword()`
-2. **Update `profile.tsx`** - Use `supabase.rpc('update_user_profile', ...)`
-3. **Test the flow** - Sign up → Select user type → Complete profile
+1. ✅ **auth.tsx** - Now uses `supabase.auth.signUp()` and `supabase.auth.signInWithPassword()`
+2. ✅ **profile.tsx** - Saves user profiles directly to Supabase
+3. ✅ **AuthContext** - Manages authentication state throughout the app
 
-See `INTEGRATION_GUIDE.md` for code examples!
+**Ready to test!** Just complete Step 3 (run the SQL migration) and you can:
+- Sign up new users
+- Create profiles
+- View users in Supabase dashboard
 
 ---
 

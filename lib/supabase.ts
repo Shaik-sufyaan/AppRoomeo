@@ -49,10 +49,10 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
-          id: string;
+          id?: string; // Optional because it might be auto-created by trigger
           user_type?: 'looking-for-place' | 'finding-roommate' | null;
-          name: string;
-          age: number;
+          name?: string; // Optional because trigger creates default
+          age?: number; // Optional because trigger creates default
           college?: string | null;
           work_status?: 'part-time' | 'full-time' | 'not-working';
           smoker?: boolean;

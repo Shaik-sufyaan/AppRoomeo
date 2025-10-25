@@ -11,15 +11,18 @@ import colors from "@/constants/colors";
 import { typography } from "@/constants/typography";
 import { spacing, borderRadius } from "@/constants/spacing";
 import Card from "@/components/Card";
+import { useAuth } from "@/contexts/AuthContext";
 
 type UserType = "looking-for-place" | "finding-roommate" | null;
 
 export default function UserTypeScreen() {
   const router = useRouter();
+  const { setUserType } = useAuth();
   const [selectedType, setSelectedType] = useState<UserType>(null);
 
   const handleContinue = () => {
     if (selectedType) {
+      setUserType(selectedType);
       router.push("/onboarding/profile");
     }
   };
@@ -68,8 +71,14 @@ export default function UserTypeScreen() {
                       }
                     />
                   </View>
-                  <Text style={styles.cardTitle}>Looking for a place</Text>
-                  <Text style={styles.cardDescription}>
+                  <Text style={[
+                    styles.cardTitle,
+                    selectedType === "looking-for-place" && styles.selectedCardTitle
+                  ]}>Looking for a place</Text>
+                  <Text style={[
+                    styles.cardDescription,
+                    selectedType === "looking-for-place" && styles.selectedCardDescription
+                  ]}>
                     Find rooms and apartments from people who have space to share
                   </Text>
                 </Card>
@@ -102,8 +111,14 @@ export default function UserTypeScreen() {
                       }
                     />
                   </View>
-                  <Text style={styles.cardTitle}>Finding a roommate</Text>
-                  <Text style={styles.cardDescription}>
+                  <Text style={[
+                    styles.cardTitle,
+                    selectedType === "finding-roommate" && styles.selectedCardTitle
+                  ]}>Finding a roommate</Text>
+                  <Text style={[
+                    styles.cardDescription,
+                    selectedType === "finding-roommate" && styles.selectedCardDescription
+                  ]}>
                     I have a place and looking for someone to share it with
                   </Text>
                 </Card>
@@ -185,9 +200,16 @@ const styles = StyleSheet.create({
     color: colors.primary,
     marginBottom: spacing.sm,
   },
+  selectedCardTitle: {
+    color: colors.white,
+  },
   cardDescription: {
     ...typography.bodySmall,
     color: colors.textSecondary,
+  },
+  selectedCardDescription: {
+    color: colors.white,
+    opacity: 0.9,
   },
   footer: {
     padding: spacing.xl,
