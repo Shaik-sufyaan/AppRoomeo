@@ -7,9 +7,10 @@ import {
   TouchableOpacity,
   Switch,
   Alert,
+  Image,
 } from "react-native";
 import { useRouter, Stack } from "expo-router";
-import { Camera } from "lucide-react-native";
+import { Camera, X } from "lucide-react-native";
 import colors from "@/constants/colors";
 import { typography } from "@/constants/typography";
 import { spacing, borderRadius } from "@/constants/spacing";
@@ -20,6 +21,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { User } from "@/types";
 import { createProfile } from "@/lib/profiles";
 import { supabase } from "@/lib/supabase";
+import { pickImage, pickMultipleImages, uploadImage, uploadMultipleImages } from "@/lib/storage";
 
 export default function ProfileScreen() {
   const router = useRouter();
@@ -35,6 +37,39 @@ export default function ProfileScreen() {
   const [hasPlace, setHasPlace] = useState(false);
   const [about, setAbout] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Photo states
+  const [profilePhotoUri, setProfilePhotoUri] = useState<string | null>(null);
+  const [roomPhotoUris, setRoomPhotoUris] = useState<string[]>([]);
+
+  // Check if user is finding a roommate (should see room photos option)
+  const isFindingRoommate = onboardingData.userType === 'finding-roommate';
+
+  const handlePickProfilePhoto = async () => {
+    try {
+      const uri = await pickImage();
+      if (uri) {
+        setProfilePhotoUri(uri);
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to pick photo');
+    }
+  };
+
+  const handlePickRoomPhotos = async () => {
+    try {
+      const uris = await pickMultipleImages({ quality: 0.8 });
+      if (uris.length > 0) {
+        setRoomPhotoUris([...roomPhotoUris, ...uris]);
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to pick photos');
+    }
+  };
+
+  const handleRemoveRoomPhoto = (index: number) => {
+    setRoomPhotoUris(roomPhotoUris.filter((_, i) => i !== index));
+  };
 
   const handleComplete = async () => {
     setIsLoading(true);
@@ -79,6 +114,36 @@ export default function ProfileScreen() {
         return;
       }
 
+      // Upload images to Supabase Storage
+      let profilePhotoUrls: string[] = [];
+      let roomPhotoUrls: string[] = [];
+
+      try {
+        // Upload profile photo if selected
+        if (profilePhotoUri) {
+          const result = await uploadImage({
+            userId: currentUser.id,
+            imageUri: profilePhotoUri,
+            bucket: 'profile-photos',
+          });
+          profilePhotoUrls = [result.url];
+        }
+
+        // Upload room photos if user is finding roommate and has selected photos
+        if (isFindingRoommate && roomPhotoUris.length > 0) {
+          const results = await uploadMultipleImages({
+            userId: currentUser.id,
+            imageUris: roomPhotoUris,
+            bucket: 'room-photos',
+          });
+          roomPhotoUrls = results.map(r => r.url);
+        }
+      } catch (uploadError: any) {
+        Alert.alert("Upload Error", uploadError.message || "Failed to upload images");
+        setIsLoading(false);
+        return;
+      }
+
       // Save profile to Supabase
       await createProfile({
         id: currentUser.id,
@@ -91,8 +156,8 @@ export default function ProfileScreen() {
         pets,
         has_place: hasPlace,
         about: about || null,
-        photos: ["https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"],
-        room_photos: hasPlace ? ["https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800"] : [],
+        photos: profilePhotoUrls.length > 0 ? profilePhotoUrls : ["https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=800"],
+        room_photos: roomPhotoUrls.length > 0 ? roomPhotoUrls : [],
       });
 
       // Also save to local context for app functionality
@@ -135,8 +200,16 @@ export default function ProfileScreen() {
         }}
       />
       <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <TouchableOpacity style={styles.photoUploader} testID="photo-uploader">
-          <Avatar size="xlarge" name={name || "User"} />
+        <TouchableOpacity
+          style={styles.photoUploader}
+          testID="photo-uploader"
+          onPress={handlePickProfilePhoto}
+        >
+          {profilePhotoUri ? (
+            <Image source={{ uri: profilePhotoUri }} style={styles.profileImage} />
+          ) : (
+            <Avatar size="xlarge" name={name || "User"} />
+          )}
           <View style={styles.cameraIcon}>
             <Camera size={20} color={colors.white} />
           </View>
@@ -239,14 +312,37 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          {hasPlace && (
+          {isFindingRoommate && (
             <View style={styles.roomPhotosSection}>
               <Text style={styles.label}>Room Photos</Text>
+              <Text style={styles.photoDescription}>
+                Add photos of your place to attract potential roommates
+              </Text>
+
+              {roomPhotoUris.length > 0 && (
+                <View style={styles.roomPhotosGrid}>
+                  {roomPhotoUris.map((uri, index) => (
+                    <View key={index} style={styles.roomPhotoContainer}>
+                      <Image source={{ uri }} style={styles.roomPhoto} />
+                      <TouchableOpacity
+                        style={styles.removePhotoButton}
+                        onPress={() => handleRemoveRoomPhoto(index)}
+                      >
+                        <X size={16} color={colors.white} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
               <TouchableOpacity
                 style={styles.uploadButton}
                 testID="upload-room-photos"
+                onPress={handlePickRoomPhotos}
               >
-                <Text style={styles.uploadButtonText}>+ Add Room Photos</Text>
+                <Text style={styles.uploadButtonText}>
+                  + {roomPhotoUris.length > 0 ? 'Add More Photos' : 'Add Room Photos'}
+                </Text>
               </TouchableOpacity>
             </View>
           )}
@@ -295,6 +391,11 @@ const styles = StyleSheet.create({
     position: "relative",
     marginBottom: spacing.sm,
   },
+  profileImage: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+  },
   cameraIcon: {
     position: "absolute",
     bottom: 0,
@@ -313,6 +414,11 @@ const styles = StyleSheet.create({
     color: colors.gray,
     textAlign: "center",
     marginBottom: spacing.xl,
+  },
+  photoDescription: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
   },
   form: {
     gap: spacing.md,
@@ -362,6 +468,34 @@ const styles = StyleSheet.create({
   roomPhotosSection: {
     gap: spacing.sm,
   },
+  roomPhotosGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  roomPhotoContainer: {
+    position: 'relative',
+    width: '48%',
+    aspectRatio: 1,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+  },
+  roomPhoto: {
+    width: '100%',
+    height: '100%',
+  },
+  removePhotoButton: {
+    position: 'absolute',
+    top: spacing.xs,
+    right: spacing.xs,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   uploadButton: {
     backgroundColor: colors.white,
     borderWidth: 2,
@@ -370,6 +504,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.md,
     paddingVertical: spacing.xl,
     alignItems: "center",
+    marginTop: spacing.sm,
   },
   uploadButtonText: {
     ...typography.body,

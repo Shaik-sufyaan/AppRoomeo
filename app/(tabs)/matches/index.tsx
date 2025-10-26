@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -9,17 +9,35 @@ import {
   PanResponder,
   TouchableOpacity,
   ScrollView,
+  Alert,
+  ActivityIndicator,
 } from "react-native";
-import { Handshake, ArrowRight, Briefcase, GraduationCap, Dog, Cigarette, ChevronDown } from "lucide-react-native";
+import {
+  Handshake,
+  ArrowRight,
+  Briefcase,
+  GraduationCap,
+  Dog,
+  Cigarette,
+  ChevronDown,
+  Home,
+  Users,
+} from "lucide-react-native";
+import { Stack, useRouter } from "expo-router";
 import colors from "@/constants/colors";
 import { typography } from "@/constants/typography";
 import { spacing, borderRadius } from "@/constants/spacing";
 import Badge from "@/components/Badge";
-import { mockUsers } from "@/mocks/users";
-import { User } from "@/types";
-import { useApp } from "@/contexts/AppContext";
-import { Stack } from "expo-router";
+import MatchCelebrationModal from "@/components/MatchCelebrationModal";
 import NotificationBell from "@/components/NotificationBell";
+import { User, UserType } from "@/types";
+import { useApp } from "@/contexts/AppContext";
+import {
+  getMatchFeed,
+  sendMatchRequest,
+  recordSwipe,
+} from "@/lib/api/matches";
+import { supabase } from "@/lib/supabase";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25;
@@ -33,12 +51,22 @@ const RESIDENCIES = [
 ];
 
 export default function MatchesScreen() {
-  const [users] = useState<User[]>(mockUsers);
+  const router = useRouter();
+  const { currentUser, notificationCounts } = useApp();
+
+  // State
+  const [users, setUsers] = useState<User[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedResidency, setSelectedResidency] = useState<string>("all");
   const [showResidencyPicker, setShowResidencyPicker] = useState(false);
-  const { createPendingChat, currentUser, notificationCounts } = useApp();
-  
+  const [isLoadingFeed, setIsLoadingFeed] = useState(true);
+
+  // Match celebration modal
+  const [showMatchModal, setShowMatchModal] = useState(false);
+  const [matchedUser, setMatchedUser] = useState<User | null>(null);
+  const [isMutualMatch, setIsMutualMatch] = useState(false);
+
+  // Animation
   const position = useRef(new Animated.ValueXY()).current;
   const rotation = position.x.interpolate({
     inputRange: [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
@@ -57,6 +85,44 @@ export default function MatchesScreen() {
     outputRange: [1, 0],
     extrapolate: "clamp",
   });
+
+  // Load data on mount
+  useEffect(() => {
+    loadMatchFeed();
+  }, []);
+
+  const loadMatchFeed = async () => {
+    setIsLoadingFeed(true);
+    try {
+      const result = await getMatchFeed(20, 0);
+      if (result.success && result.data) {
+        // Convert API response to User type
+        const usersData: User[] = result.data.map((profile) => ({
+          id: profile.profile_id,
+          name: profile.name,
+          age: profile.age,
+          userType: profile.user_type,
+          college: profile.college,
+          workStatus: profile.work_status,
+          smoker: profile.smoker,
+          pets: profile.pets,
+          hasPlace: profile.has_place,
+          about: profile.about,
+          photos: profile.photos || [],
+          roomPhotos: profile.room_photos || [],
+          distance: profile.distance,
+        }));
+        setUsers(usersData);
+      } else {
+        console.error("Failed to load match feed:", result.error);
+      }
+    } catch (error) {
+      console.error("Error loading match feed:", error);
+    } finally {
+      setIsLoadingFeed(false);
+    }
+  };
+
 
   const panResponder = useRef(
     PanResponder.create({
@@ -79,47 +145,121 @@ export default function MatchesScreen() {
     })
   ).current;
 
-  const swipeRight = () => {
-    const connectedUser = users[currentIndex];
-    
+  const swipeRight = async () => {
+    const swipedUser = users[currentIndex];
+
     Animated.timing(position, {
       toValue: { x: SCREEN_WIDTH + 100, y: 0 },
       duration: 250,
       useNativeDriver: false,
-    }).start(() => {
-      if (currentUser && connectedUser) {
-        console.log("Creating connection request for user:", connectedUser.name);
-        createPendingChat(connectedUser, currentUser.id);
+    }).start(async () => {
+      if (swipedUser) {
+        // Send match request
+        const result = await sendMatchRequest(swipedUser.id);
+
+        if (result.success) {
+          if (result.data?.is_mutual) {
+            // Show mutual match modal
+            setMatchedUser(swipedUser);
+            setIsMutualMatch(true);
+            setShowMatchModal(true);
+          } else {
+            // Show success toast
+            Alert.alert("Request Sent!", `Request sent to ${swipedUser.name}!`);
+          }
+        } else {
+          if (result.error === "INCOMPATIBLE_USER_TYPES") {
+            Alert.alert("Incompatible Match", "This user is not compatible with your profile type");
+          } else if (result.error === "ALREADY_MATCHED") {
+            Alert.alert("Already Matched", "You're already matched with this user!");
+          } else if (result.error === "REQUEST_ALREADY_SENT") {
+            Alert.alert("Request Pending", `You already sent a request to ${swipedUser.name}`);
+          } else {
+            Alert.alert("Error", result.error || "Failed to send request");
+          }
+        }
       }
-      
+
       setCurrentIndex((prev) => prev + 1);
       position.setValue({ x: 0, y: 0 });
     });
   };
 
-  const swipeLeft = () => {
+  const swipeLeft = async () => {
+    const swipedUser = users[currentIndex];
+
     Animated.timing(position, {
       toValue: { x: -SCREEN_WIDTH - 100, y: 0 },
       duration: 250,
       useNativeDriver: false,
-    }).start(() => {
+    }).start(async () => {
+      if (swipedUser) {
+        // Record skip swipe
+        await recordSwipe(swipedUser.id, "skip");
+      }
+
       setCurrentIndex((prev) => prev + 1);
       position.setValue({ x: 0, y: 0 });
     });
   };
 
+
+  const handleSendMessage = () => {
+    if (matchedUser) {
+      setShowMatchModal(false);
+      // Navigate to chat with matched user
+      router.push(`/chat/${matchedUser.id}`);
+    }
+  };
+
+  const getSmartFilterMessage = (): string => {
+    if (!currentUser?.userType) return "";
+
+    if (currentUser.userType === "finding-roommate") {
+      return "💡 Showing: People looking for a place\n   (You have a place to share)";
+    } else {
+      return "💡 Showing: People with a place to share\n   (You're looking for a place)";
+    }
+  };
+
   const displayUser = users[currentIndex];
 
-  if (!displayUser) {
+  if (isLoadingFeed && users.length === 0) {
     return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyTitle}>No more profiles</Text>
-        <Text style={styles.emptyText}>Check back later for new matches!</Text>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.accent} />
+        <Text style={styles.loadingText}>Loading profiles...</Text>
       </View>
     );
   }
 
-  const selectedResidencyName = RESIDENCIES.find(r => r.id === selectedResidency)?.name || "All Residencies";
+  if (!displayUser && !isLoadingFeed) {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            title: "Matches",
+            headerShown: true,
+            headerStyle: { backgroundColor: colors.background },
+            headerTintColor: colors.primary,
+            headerRight: () => (
+              <NotificationBell
+                count={notificationCounts.matches}
+                testID="matches-notifications"
+              />
+            ),
+          }}
+        />
+        <View style={styles.emptyContainer}>
+          <Text style={styles.emptyTitle}>No more profiles</Text>
+          <Text style={styles.emptyText}>Check back later for new matches!</Text>
+        </View>
+      </>
+    );
+  }
+
+  const selectedResidencyName =
+    RESIDENCIES.find((r) => r.id === selectedResidency)?.name || "All Residencies";
 
   return (
     <>
@@ -137,7 +277,9 @@ export default function MatchesScreen() {
           ),
         }}
       />
-      <View style={styles.container}>
+
+      <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+        {/* Residency Selector */}
         <View style={styles.residencySelector}>
           <TouchableOpacity
             style={styles.residencyButton}
@@ -167,7 +309,8 @@ export default function MatchesScreen() {
                     <Text
                       style={[
                         styles.residencyItemText,
-                        selectedResidency === residency.id && styles.residencyItemTextSelected,
+                        selectedResidency === residency.id &&
+                          styles.residencyItemTextSelected,
                       ]}
                     >
                       {residency.name}
@@ -178,134 +321,173 @@ export default function MatchesScreen() {
             </View>
           )}
         </View>
-        <View style={styles.cardContainer}>
-        {users.slice(currentIndex, currentIndex + 2).map((user, index) => {
-          if (index === 0) {
-            return (
-              <Animated.View
-                key={user.id}
-                style={[
-                  styles.card,
-                  {
-                    transform: [
-                      { translateX: position.x },
-                      { translateY: position.y },
-                      { rotate: rotation },
-                    ],
-                    zIndex: 2,
-                  },
-                ]}
-                {...panResponder.panHandlers}
-              >
-                <Image
-                  source={{ uri: user.photos[0] }}
-                  style={styles.cardImage}
-                  resizeMode="cover"
-                />
-                <View style={styles.cardOverlay} />
 
-                <Animated.View
-                  style={[styles.connectLabel, { opacity: likeOpacity }]}
-                >
-                  <Text style={styles.labelText}>CONNECT</Text>
-                </Animated.View>
+        {/* Smart Filter Indicator */}
+        {currentUser?.userType && (
+          <View style={styles.smartFilterContainer}>
+            <Text style={styles.smartFilterText}>{getSmartFilterMessage()}</Text>
+          </View>
+        )}
 
-                <Animated.View
-                  style={[styles.skipLabel, { opacity: nopeOpacity }]}
-                >
-                  <Text style={styles.labelText}>SKIP</Text>
-                </Animated.View>
-
-                <View style={styles.cardInfo}>
-                  <View style={styles.header}>
-                    <View>
-                      <Text style={styles.name}>
-                        {user.name}, {user.age}
-                      </Text>
-                      {user.college && (
-                        <View style={styles.infoRow}>
-                          <GraduationCap size={16} color={colors.white} />
-                          <Text style={styles.college}>{user.college}</Text>
-                        </View>
-                      )}
-                      {user.distance && (
-                        <Text style={styles.distance}>{user.distance} miles away</Text>
-                      )}
-                    </View>
-                  </View>
-
-                  <View style={styles.badges}>
-                    <Badge
-                      label={user.workStatus === "full-time" ? "Full-time" : user.workStatus === "part-time" ? "Part-time" : "Student"}
-                      variant="gold"
-                    />
-                    {user.hasPlace && <Badge label="Has Place" variant="primary" />}
-                  </View>
-
-                  <View style={styles.icons}>
-                    <View style={styles.iconItem}>
-                      <Briefcase
-                        size={18}
-                        color={user.workStatus !== "not-working" ? colors.accent : colors.gray}
-                      />
-                    </View>
-                    <View style={styles.iconItem}>
-                      <Dog
-                        size={18}
-                        color={user.pets ? colors.accent : colors.gray}
-                      />
-                    </View>
-                    <View style={styles.iconItem}>
-                      <Cigarette
-                        size={18}
-                        color={user.smoker ? colors.error : colors.gray}
-                      />
-                    </View>
-                  </View>
-
-                  {user.about && (
-                    <Text style={styles.about} numberOfLines={2}>
-                      {user.about}
-                    </Text>
-                  )}
-                </View>
-              </Animated.View>
-            );
-          }
-
-          return (
-            <View
-              key={user.id}
-              style={[styles.card, { zIndex: 1 }]}
-            >
-              <Image
-                source={{ uri: user.photos[0] }}
-                style={styles.cardImage}
-                resizeMode="cover"
-              />
+        {/* Discover Section */}
+        {displayUser && (
+          <>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>DISCOVER</Text>
             </View>
-          );
-        })}
-        </View>
 
-        <View style={styles.actions}>
-        <TouchableOpacity
-          style={[styles.actionButton, styles.skipButton]}
-          onPress={swipeLeft}
-          testID="skip-button"
-        >
-          <ArrowRight size={28} color={colors.gray} />
-        </TouchableOpacity>
+            <View style={styles.cardContainer}>
+              {users.slice(currentIndex, currentIndex + 2).map((user, index) => {
+                if (index === 0) {
+                  return (
+                    <Animated.View
+                      key={user.id}
+                      style={[
+                        styles.card,
+                        {
+                          transform: [
+                            { translateX: position.x },
+                            { translateY: position.y },
+                            { rotate: rotation },
+                          ],
+                          zIndex: 2,
+                        },
+                      ]}
+                      {...panResponder.panHandlers}
+                    >
+                      <Image
+                        source={{ uri: user.photos[0] }}
+                        style={styles.cardImage}
+                        resizeMode="cover"
+                      />
+                      <View style={styles.cardOverlay} />
 
-        <TouchableOpacity
-          style={[styles.actionButton, styles.connectButton]}
-          onPress={swipeRight}
-          testID="connect-button"
-        >
-          <Handshake size={28} color={colors.accent} />
-        </TouchableOpacity>
-        </View>
-      </View>
+                      <Animated.View style={[styles.connectLabel, { opacity: likeOpacity }]}>
+                        <Text style={styles.labelText}>CONNECT</Text>
+                      </Animated.View>
+
+                      <Animated.View style={[styles.skipLabel, { opacity: nopeOpacity }]}>
+                        <Text style={styles.labelText}>SKIP</Text>
+                      </Animated.View>
+
+                      <View style={styles.cardInfo}>
+                        <View style={styles.header}>
+                          <View>
+                            <Text style={styles.name}>
+                              {user.name}, {user.age}
+                            </Text>
+                            {user.college && (
+                              <View style={styles.infoRow}>
+                                <GraduationCap size={16} color={colors.white} />
+                                <Text style={styles.college}>{user.college}</Text>
+                              </View>
+                            )}
+                            {user.distance && (
+                              <Text style={styles.distance}>{user.distance} miles away</Text>
+                            )}
+                          </View>
+                        </View>
+
+                        <View style={styles.badges}>
+                          {user.userType === "looking-for-place" ? (
+                            <View style={styles.userTypeBadge}>
+                              <Home size={14} color={colors.white} />
+                              <Text style={styles.userTypeBadgeText}>Looking for a place</Text>
+                            </View>
+                          ) : (
+                            <View style={styles.userTypeBadge}>
+                              <Users size={14} color={colors.white} />
+                              <Text style={styles.userTypeBadgeText}>Has a place</Text>
+                            </View>
+                          )}
+
+                          <Badge
+                            label={
+                              user.workStatus === "full-time"
+                                ? "Full-time"
+                                : user.workStatus === "part-time"
+                                ? "Part-time"
+                                : "Student"
+                            }
+                            variant="gold"
+                          />
+                          {user.hasPlace && <Badge label="Has Place" variant="primary" />}
+                        </View>
+
+                        <View style={styles.icons}>
+                          <View style={styles.iconItem}>
+                            <Briefcase
+                              size={18}
+                              color={user.workStatus !== "not-working" ? colors.accent : colors.gray}
+                            />
+                          </View>
+                          <View style={styles.iconItem}>
+                            <Dog size={18} color={user.pets ? colors.accent : colors.gray} />
+                          </View>
+                          <View style={styles.iconItem}>
+                            <Cigarette
+                              size={18}
+                              color={user.smoker ? colors.error : colors.gray}
+                            />
+                          </View>
+                        </View>
+
+                        {user.about && (
+                          <Text style={styles.about} numberOfLines={2}>
+                            {user.about}
+                          </Text>
+                        )}
+                      </View>
+                    </Animated.View>
+                  );
+                }
+
+                return (
+                  <View key={user.id} style={[styles.card, { zIndex: 1 }]}>
+                    <Image
+                      source={{ uri: user.photos[0] }}
+                      style={styles.cardImage}
+                      resizeMode="cover"
+                    />
+                  </View>
+                );
+              })}
+            </View>
+
+            <View style={styles.actions}>
+              <TouchableOpacity
+                style={[styles.actionButton, styles.skipButton]}
+                onPress={swipeLeft}
+                testID="skip-button"
+              >
+                <ArrowRight size={28} color={colors.gray} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.actionButton, styles.connectButton]}
+                onPress={swipeRight}
+                testID="connect-button"
+              >
+                <Handshake size={28} color={colors.accent} />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+      </ScrollView>
+
+      {/* Match Celebration Modal */}
+      {matchedUser && currentUser && (
+        <MatchCelebrationModal
+          visible={showMatchModal}
+          matchedUser={matchedUser}
+          currentUser={currentUser as User}
+          isMutual={isMutualMatch}
+          onClose={() => setShowMatchModal(false)}
+          onSendMessage={handleSendMessage}
+          testID="match-celebration-modal"
+        />
+      )}
+
     </>
   );
 }
@@ -314,6 +496,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: colors.background,
+  },
+  loadingText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    marginTop: spacing.md,
   },
   residencySelector: {
     paddingHorizontal: spacing.md,
@@ -374,15 +567,40 @@ const styles = StyleSheet.create({
     color: colors.accent,
     fontWeight: "600",
   },
+  smartFilterContainer: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.accentLight,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: borderRadius.md,
+  },
+  smartFilterText: {
+    ...typography.caption,
+    color: colors.primary,
+    lineHeight: 18,
+  },
+  section: {
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontWeight: "700",
+    letterSpacing: 1,
+    marginBottom: spacing.md,
+  },
   cardContainer: {
-    flex: 1,
+    height: SCREEN_HEIGHT - 400,
     justifyContent: "center",
     alignItems: "center",
+    marginBottom: spacing.md,
   },
   card: {
     position: "absolute",
     width: SCREEN_WIDTH - 40,
-    height: SCREEN_HEIGHT - 300,
+    height: SCREEN_HEIGHT - 400,
     borderRadius: borderRadius.xl,
     backgroundColor: colors.card,
     shadowColor: colors.primaryDark,
@@ -474,7 +692,22 @@ const styles = StyleSheet.create({
   },
   badges: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.sm,
+  },
+  userTypeBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.9)",
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.sm,
+    gap: spacing.xs,
+  },
+  userTypeBadgeText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: "600",
   },
   icons: {
     flexDirection: "row",

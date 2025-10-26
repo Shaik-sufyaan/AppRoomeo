@@ -1,7 +1,10 @@
+export type UserType = "looking-for-place" | "finding-roommate";
+
 export interface User {
   id: string;
   name: string;
   age: number;
+  userType?: UserType;
   college?: string;
   workStatus: "part-time" | "full-time" | "not-working";
   smoker: boolean;
@@ -17,6 +20,44 @@ export interface Match {
   id: string;
   user: User;
   timestamp: number;
+}
+
+// New matching system types
+export interface MatchRequest {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  status: "pending" | "approved" | "rejected";
+  message?: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt?: string;
+}
+
+export interface MatchRequestWithUser extends MatchRequest {
+  user: User;
+}
+
+export interface ConfirmedMatch {
+  id: string;
+  userAId: string;
+  userBId: string;
+  matchedAt: string;
+  isMutual: boolean;
+}
+
+export interface ConfirmedMatchWithUser extends ConfirmedMatch {
+  matchedUser: User;
+}
+
+export type SwipeType = "like" | "skip" | "reject";
+
+export interface SwipeRecord {
+  id: string;
+  swiperId: string;
+  swipedUserId: string;
+  swipeType: SwipeType;
+  createdAt: string;
 }
 
 export interface Message {
@@ -95,6 +136,8 @@ export interface ExpenseEvent {
 
 export type NotificationType =
   | "match_request"
+  | "match_approved"
+  | "mutual_match"
   | "marketplace_interest"
   | "expense_added"
   | "chat_message"
