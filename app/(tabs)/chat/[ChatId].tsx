@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -8,24 +8,177 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
-import { Send, UserPlus } from "lucide-react-native";
+import { Send } from "lucide-react-native";
 import colors from "@/constants/colors";
 import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
 import Avatar from "@/components/Avatar";
-import { useApp } from "@/contexts/AppContext";
-import Badge from "@/components/Badge";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  getMessages,
+  sendMessage,
+  markConversationAsRead,
+  subscribeToMessages,
+  unsubscribe,
+  MessageWithSender,
+} from "@/lib/api/chat";
+import { supabase } from "@/lib/supabase";
+import { RealtimeChannel } from "@supabase/supabase-js";
 
 export default function ChatThreadScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
-  const { conversations, addFriend } = useApp();
+  const { user } = useAuth();
   const [message, setMessage] = useState<string>("");
+  const [messages, setMessages] = useState<MessageWithSender[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [otherUser, setOtherUser] = useState<any>(null);
+  const flatListRef = useRef<FlatList>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
-  const conversation = conversations.find((c) => c.id === chatId);
+  // Load conversation details and messages
+  useEffect(() => {
+    if (!chatId || !user) return;
 
-  if (!conversation) {
+    loadConversationAndMessages();
+
+    // Set up real-time subscription
+    channelRef.current = subscribeToMessages(chatId, handleNewMessage);
+
+    // Mark conversation as read when entering
+    markConversationAsRead(chatId);
+
+    // Cleanup subscription on unmount
+    return () => {
+      if (channelRef.current) {
+        unsubscribe(channelRef.current);
+      }
+    };
+  }, [chatId, user]);
+
+  const loadConversationAndMessages = async () => {
+    setIsLoading(true);
+
+    // Get conversation details to find other user
+    const { data: conversation } = await supabase
+      .from('conversations')
+      .select(`
+        *,
+        user_a:profiles!user_a_id(id, name, photos, user_type, age),
+        user_b:profiles!user_b_id(id, name, photos, user_type, age)
+      `)
+      .eq('id', chatId)
+      .single();
+
+    if (conversation) {
+      // Determine the other user
+      const other = conversation.user_a_id === user?.id
+        ? conversation.user_b
+        : conversation.user_a;
+      setOtherUser(other);
+    }
+
+    // Load messages
+    const result = await getMessages(chatId);
+    if (result.success && result.data) {
+      // Add isMe flag to messages
+      const messagesWithIsMe = result.data.map(msg => ({
+        ...msg,
+        isMe: msg.sender_id === user?.id,
+      }));
+      setMessages(messagesWithIsMe);
+
+      // Scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: false });
+      }, 100);
+    }
+
+    setIsLoading(false);
+  };
+
+  const handleNewMessage = (newMessage: any) => {
+    // Add the new message to the list
+    const messageWithSender: MessageWithSender = {
+      ...newMessage,
+      isMe: newMessage.sender_id === user?.id,
+      sender: newMessage.sender_id === user?.id
+        ? { id: user.id, name: 'You', photos: [] }
+        : otherUser,
+    };
+
+    setMessages(prev => [...prev, messageWithSender]);
+
+    // Scroll to bottom
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+
+    // Mark as read if not sent by current user
+    if (newMessage.sender_id !== user?.id) {
+      markConversationAsRead(chatId);
+    }
+  };
+
+  const handleSend = async () => {
+    if (!message.trim() || isSending) return;
+
+    const messageText = message.trim();
+    setMessage("");
+    setIsSending(true);
+
+    const result = await sendMessage(chatId, messageText);
+
+    if (result.success && result.data) {
+      // Message will be added via real-time subscription
+      // But we can add it optimistically for better UX
+      const optimisticMessage: MessageWithSender = {
+        ...result.data,
+        isMe: true,
+        sender: {
+          id: user?.id || '',
+          name: 'You',
+          photos: [],
+        },
+      };
+
+      setMessages(prev => [...prev, optimisticMessage]);
+
+      // Scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    } else {
+      // Show error - restore message text
+      setMessage(messageText);
+      alert(result.error || 'Failed to send message');
+    }
+
+    setIsSending(false);
+  };
+
+  if (isLoading) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen
+          options={{
+            title: "Loading...",
+            headerShown: true,
+            headerStyle: { backgroundColor: colors.background },
+            headerTintColor: colors.primary,
+          }}
+        />
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </View>
+    );
+  }
+
+  if (!otherUser) {
     return (
       <View style={styles.container}>
         <Text style={styles.errorText}>Conversation not found</Text>
@@ -33,79 +186,14 @@ export default function ChatThreadScreen() {
     );
   }
 
-  const handleAddFriend = () => {
-    addFriend(conversation.user.id);
-    console.log("Friend added:", conversation.user.name);
-  };
-
-  const handleSend = () => {
-    if (message.trim()) {
-      console.log("Send message:", message);
-      setMessage("");
-    }
-  };
-
-  const messages = [
-    {
-      id: "1",
-      text: "Hey! Looking for a roommate?",
-      isMe: false,
-      timestamp: Date.now() - 3600000,
-    },
-    {
-      id: "2",
-      text: "Hi! Yes, I am interested.",
-      isMe: true,
-      timestamp: Date.now() - 3000000,
-    },
-    {
-      id: "3",
-      text: "Great! When can we meet?",
-      isMe: false,
-      timestamp: Date.now() - 1800000,
-    },
-    {
-      id: "4",
-      text: "How about this weekend? I'm free on Saturday afternoon.",
-      isMe: true,
-      timestamp: Date.now() - 1200000,
-    },
-    {
-      id: "5",
-      text: "Perfect! Saturday at 2 PM works for me. Coffee shop near campus?",
-      isMe: false,
-      timestamp: Date.now() - 600000,
-    },
-    {
-      id: "6",
-      text: "Sounds good! See you then.",
-      isMe: true,
-      timestamp: Date.now() - 300000,
-    },
-  ];
-
   return (
     <>
       <Stack.Screen
         options={{
-          title: conversation.user.name,
+          title: otherUser.name,
           headerShown: true,
           headerStyle: { backgroundColor: colors.background },
           headerTintColor: colors.primary,
-          headerRight: () => (
-            <TouchableOpacity
-              onPress={handleAddFriend}
-              disabled={conversation.isFriend}
-              style={styles.headerButton}
-              testID="add-friend-button"
-            >
-              {conversation.isFriend ? (
-                <Badge text="Friend" variant="success" />
-              ) : (
-                <UserPlus size={24} color={colors.accent} />
-              )}
-            </TouchableOpacity>
-          ),
         }}
       />
       <KeyboardAvoidingView
@@ -114,6 +202,7 @@ export default function ChatThreadScreen() {
         keyboardVerticalOffset={90}
       >
         <FlatList
+          ref={flatListRef}
           data={messages}
           contentContainerStyle={styles.messageList}
           keyExtractor={(item) => item.id}
@@ -124,9 +213,9 @@ export default function ChatThreadScreen() {
                 item.isMe ? styles.myMessage : styles.theirMessage,
               ]}
             >
-              {!item.isMe && (
+              {!item.isMe && otherUser.photos?.[0] && (
                 <Avatar
-                  uri={conversation.user.photos[0]}
+                  uri={otherUser.photos[0]}
                   size="small"
                   style={styles.avatar}
                 />
@@ -148,6 +237,14 @@ export default function ChatThreadScreen() {
               </View>
             </View>
           )}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No messages yet</Text>
+              <Text style={styles.emptySubtext}>
+                Start the conversation!
+              </Text>
+            </View>
+          }
         />
         <View style={styles.inputContainer}>
           <TextInput
@@ -159,17 +256,22 @@ export default function ChatThreadScreen() {
             multiline
             maxLength={500}
             testID="message-input"
+            editable={!isSending}
           />
           <TouchableOpacity
             style={styles.sendButton}
             onPress={handleSend}
-            disabled={!message.trim()}
+            disabled={!message.trim() || isSending}
             testID="send-button"
           >
-            <Send
-              size={24}
-              color={message.trim() ? colors.accent : colors.gray}
-            />
+            {isSending ? (
+              <ActivityIndicator size="small" color={colors.accent} />
+            ) : (
+              <Send
+                size={24}
+                color={message.trim() ? colors.accent : colors.gray}
+              />
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -182,8 +284,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  headerButton: {
-    marginRight: spacing.md,
+  loadingContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
   messageList: {
     padding: spacing.md,
@@ -223,6 +327,21 @@ const styles = StyleSheet.create({
   },
   theirMessageText: {
     color: colors.textPrimary,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.xl * 2,
+  },
+  emptyText: {
+    ...typography.h3,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  emptySubtext: {
+    ...typography.body,
+    color: colors.gray,
   },
   inputContainer: {
     flexDirection: "row",

@@ -62,21 +62,49 @@ export interface SwipeRecord {
 
 export interface Message {
   id: string;
+  conversationId: string;
   senderId: string;
-  receiverId: string;
   text: string;
-  timestamp: number;
   read: boolean;
+  readAt?: string;
+  createdAt: string;
+}
+
+export interface MessageWithSender extends Message {
+  sender: {
+    id: string;
+    name: string;
+    photos: string[];
+  };
+  isMe?: boolean; // Helper for UI
 }
 
 export interface Conversation {
   id: string;
-  user: User;
-  lastMessage?: Message;
+  userAId: string;
+  userBId: string;
+  contextType?: 'marketplace' | 'match' | 'general';
+  contextId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationWithDetails extends Conversation {
+  otherUser: {
+    id: string;
+    name: string;
+    photos: string[];
+    userType: 'looking-for-place' | 'finding-roommate';
+    age: number;
+  };
+  lastMessage?: {
+    id: string;
+    text: string;
+    senderId: string;
+    createdAt: string;
+    read: boolean;
+  };
   unreadCount: number;
-  isFriend: boolean;
-  status: "pending" | "accepted";
-  initiatedBy?: string;
 }
 
 export interface MarketplaceListing {

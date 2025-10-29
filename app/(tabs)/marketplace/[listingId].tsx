@@ -7,6 +7,7 @@ import {
   Image,
   TouchableOpacity,
   Dimensions,
+  ActivityIndicator,
 } from "react-native";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { UserPlus, Heart, MapPin, Tag } from "lucide-react-native";
@@ -17,14 +18,16 @@ import Avatar from "@/components/Avatar";
 import Button from "@/components/Button";
 import { useApp } from "@/contexts/AppContext";
 import Badge from "@/components/Badge";
+import { getOrCreateConversation } from "@/lib/api/chat";
 
 const { width } = Dimensions.get("window");
 
 export default function ListingDetailScreen() {
   const { listingId } = useLocalSearchParams<{ listingId: string }>();
-  const { marketplaceListings, toggleSaveListing, addFriend, startConversation, markListingAsSold, currentUser } = useApp();
+  const { marketplaceListings, toggleSaveListing, addFriend, markListingAsSold, currentUser } = useApp();
   const router = useRouter();
   const [imageIndex] = useState<number>(0);
+  const [isCreatingChat, setIsCreatingChat] = useState(false);
 
   const listing = marketplaceListings.find((l) => l.id === listingId);
 
@@ -36,9 +39,27 @@ export default function ListingDetailScreen() {
     );
   }
 
-  const handleMessageSeller = () => {
-    const conversationId = startConversation(listing.seller.id);
-    router.push(`/chat/${conversationId}`);
+  const handleMessageSeller = async () => {
+    setIsCreatingChat(true);
+    try {
+      // Create or get existing conversation with marketplace context
+      const result = await getOrCreateConversation(
+        listing.seller.id,
+        'marketplace',
+        listing.id
+      );
+
+      if (result.success && result.data) {
+        router.push(`/chat/${result.data.conversation_id}`);
+      } else {
+        alert(result.error || 'Failed to start conversation');
+      }
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+      alert('Failed to start conversation');
+    } finally {
+      setIsCreatingChat(false);
+    }
   };
 
   const handleAddFriend = () => {
@@ -152,9 +173,10 @@ export default function ListingDetailScreen() {
             </View>
           ) : (
             <Button
-              title="Message Seller"
+              title={isCreatingChat ? "Starting chat..." : "Message Seller"}
               onPress={handleMessageSeller}
               variant="primary"
+              disabled={isCreatingChat || listing.sold}
               testID="message-seller-button"
             />
           )}

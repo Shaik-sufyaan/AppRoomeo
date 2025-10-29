@@ -5,6 +5,7 @@ import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AppProvider } from "@/contexts/AppContext";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { NotificationProvider } from "@/contexts/NotificationContext";
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
@@ -31,9 +32,11 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <AuthProvider>
-          <AppProvider>
-            <RootLayoutNav />
-          </AppProvider>
+          <NotificationProvider>
+            <AppProvider>
+              <RootLayoutNav />
+            </AppProvider>
+          </NotificationProvider>
         </AuthProvider>
       </GestureHandlerRootView>
     </QueryClientProvider>

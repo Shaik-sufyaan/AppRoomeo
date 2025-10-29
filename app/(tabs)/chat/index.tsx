@@ -13,23 +13,34 @@ import NotificationBell from "@/components/NotificationBell";
 import MatchRequestCard from "@/components/MatchRequestCard";
 import MatchCelebrationModal from "@/components/MatchCelebrationModal";
 import RejectConfirmationModal from "@/components/RejectConfirmationModal";
-import { UserPlus, Trash2 } from "lucide-react-native";
+import { Trash2 } from "lucide-react-native";
 import colors from "@/constants/colors";
 import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
 import Avatar from "@/components/Avatar";
 import Card from "@/components/Card";
-import { useApp } from "@/contexts/AppContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { useNotifications } from "@/contexts/NotificationContext";
 import {
   getReceivedMatchRequests,
   approveMatchRequest,
   rejectMatchRequest,
 } from "@/lib/api/matches";
+import {
+  getConversations,
+  ConversationWithDetails,
+  getOrCreateConversation,
+} from "@/lib/api/chat";
 import { MatchRequestWithUser } from "@/types";
 
 export default function ChatScreen() {
-  const { conversations, addFriend, currentUser, removeConversation } = useApp();
+  const { user } = useAuth();
+  const { notificationCounts, refreshNotifications } = useNotifications();
   const router = useRouter();
+
+  // Conversation state
+  const [conversations, setConversations] = useState<ConversationWithDetails[]>([]);
+  const [isLoadingConversations, setIsLoadingConversations] = useState(true);
 
   // Match request state
   const [matchRequests, setMatchRequests] = useState<MatchRequestWithUser[]>([]);
@@ -42,11 +53,19 @@ export default function ChatScreen() {
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [rejectingRequest, setRejectingRequest] = useState<MatchRequestWithUser | null>(null);
 
-  const acceptedConversations = conversations.filter((c) => c.status === "accepted");
-
-  const handleAddFriend = (userId: string) => {
-    addFriend(userId);
-    console.log("Friend added:", userId);
+  // Load conversations
+  const loadConversations = async () => {
+    try {
+      setIsLoadingConversations(true);
+      const result = await getConversations();
+      if (result.success && result.data) {
+        setConversations(result.data);
+      }
+    } catch (error) {
+      console.error("Failed to load conversations:", error);
+    } finally {
+      setIsLoadingConversations(false);
+    }
   };
 
   // Load match requests
@@ -67,8 +86,10 @@ export default function ChatScreen() {
   // Reload on screen focus
   useFocusEffect(
     useCallback(() => {
+      loadConversations();
       loadMatchRequests();
-    }, [])
+      refreshNotifications(); // Refresh notification counts
+    }, [refreshNotifications])
   );
 
   // Handle approve request
@@ -79,13 +100,17 @@ export default function ChatScreen() {
     const result = await approveMatchRequest(requestId);
 
     if (result.success) {
+      // Create conversation with the matched user
+      await getOrCreateConversation(request.sender_id, 'match', result.data?.match_id);
+
       // Show celebration modal
-      setCelebratedUser(request.senderProfile);
+      setCelebratedUser(request.sender);
       setIsMutualMatch(result.data?.is_mutual || false);
       setCelebrationModalVisible(true);
 
-      // Reload requests
+      // Reload requests and conversations
       await loadMatchRequests();
+      await loadConversations();
     }
   };
 
@@ -115,12 +140,15 @@ export default function ChatScreen() {
   };
 
   // Navigate to chat with matched user
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     setCelebrationModalVisible(false);
     if (celebratedUser) {
-      // Navigate to chat with this user
-      // You may need to create a conversation first or find existing one
-      router.push("/chat");
+      // Get or create conversation with the matched user
+      const result = await getOrCreateConversation(celebratedUser.id, 'match');
+      if (result.success && result.data) {
+        // Navigate to the conversation
+        router.push(`/chat/${result.data.conversation_id}`);
+      }
     }
   };
 
@@ -134,7 +162,7 @@ export default function ChatScreen() {
           headerTintColor: colors.primary,
           headerRight: () => (
             <NotificationBell
-              count={matchRequests.length}
+              count={notificationCounts.matchRequests + notificationCounts.messages}
               testID="chat-notifications"
             />
           ),
@@ -165,68 +193,80 @@ export default function ChatScreen() {
             </View>
           ) : null}
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Messages</Text>
-            {acceptedConversations.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                testID={`chat-${item.id}`}
-                onPress={() => router.push(`/chat/${item.id}`)}
-              >
-                <Card style={styles.chatCard}>
-                  <View style={styles.chatRow}>
-                    <Avatar uri={item.user.photos[0]} size="medium" />
-                    <View style={styles.chatInfo}>
-                      <View style={styles.chatHeader}>
-                        <Text style={styles.name}>{item.user.name}</Text>
-                        <Text style={styles.timestamp}>
-                          {new Date(item.lastMessage?.timestamp || Date.now()).toLocaleDateString()}
-                        </Text>
+          {/* Conversations Section */}
+          {isLoadingConversations ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.loadingText}>Loading conversations...</Text>
+            </View>
+          ) : (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>
+                Messages {conversations.length > 0 && `(${conversations.length})`}
+              </Text>
+              {conversations.length === 0 ? (
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>No conversations yet</Text>
+                  <Text style={styles.emptySubtext}>
+                    Match with someone to start chatting!
+                  </Text>
+                </View>
+              ) : (
+                conversations.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    testID={`chat-${item.id}`}
+                    onPress={() => router.push(`/chat/${item.id}`)}
+                  >
+                    <Card style={styles.chatCard}>
+                      <View style={styles.chatRow}>
+                        <Avatar
+                          uri={item.otherUser.photos?.[0]}
+                          size="medium"
+                        />
+                        <View style={styles.chatInfo}>
+                          <View style={styles.chatHeader}>
+                            <Text style={styles.name}>{item.otherUser.name}</Text>
+                            {item.lastMessage && (
+                              <Text style={styles.timestamp}>
+                                {new Date(item.lastMessage.createdAt).toLocaleDateString()}
+                              </Text>
+                            )}
+                          </View>
+                          <Text style={styles.lastMessage} numberOfLines={1}>
+                            {item.lastMessage?.text || "Start a conversation"}
+                          </Text>
+                        </View>
+                        {item.unreadCount > 0 && (
+                          <View style={styles.unreadBadge}>
+                            <Text style={styles.unreadText}>{item.unreadCount}</Text>
+                          </View>
+                        )}
                       </View>
-                      <Text style={styles.lastMessage} numberOfLines={1}>
-                        {item.lastMessage?.text || "Start a conversation"}
-                      </Text>
-                    </View>
-                    {item.unreadCount > 0 && (
-                      <View style={styles.unreadBadge}>
-                        <Text style={styles.unreadText}>{item.unreadCount}</Text>
-                      </View>
-                    )}
-                    <View style={styles.chatActions}>
-                      {!item.isFriend && (
-                        <TouchableOpacity
-                          onPress={() => handleAddFriend(item.user.id)}
-                          style={styles.addFriendButton}
-                          testID={`add-friend-${item.id}`}
-                        >
-                          <UserPlus size={20} color={colors.accent} />
-                        </TouchableOpacity>
-                      )}
-                      <TouchableOpacity
-                        onPress={() => {
-                          removeConversation(item.id);
-                          console.log("Removed conversation:", item.id);
-                        }}
-                        style={styles.removeButton}
-                        testID={`remove-${item.id}`}
-                      >
-                        <Trash2 size={18} color={colors.error} />
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </Card>
-              </TouchableOpacity>
-            ))}
-          </View>
+                    </Card>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+          )}
         </ScrollView>
       </View>
 
       {/* Match Celebration Modal */}
-      {celebratedUser && currentUser && (
+      {celebratedUser && user && (
         <MatchCelebrationModal
           visible={celebrationModalVisible}
           matchedUser={celebratedUser}
-          currentUser={currentUser}
+          currentUser={{
+            id: user.id,
+            name: user.user_metadata?.name || 'You',
+            age: user.user_metadata?.age || 0,
+            workStatus: user.user_metadata?.work_status || 'not-working',
+            smoker: user.user_metadata?.smoker || false,
+            pets: user.user_metadata?.pets || false,
+            hasPlace: user.user_metadata?.has_place || false,
+            photos: user.user_metadata?.photos || [],
+          }}
           isMutual={isMutualMatch}
           onClose={() => setCelebrationModalVisible(false)}
           onSendMessage={handleSendMessage}
@@ -238,7 +278,7 @@ export default function ChatScreen() {
       {rejectingRequest && (
         <RejectConfirmationModal
           visible={rejectModalVisible}
-          userName={rejectingRequest.senderProfile.name}
+          userName={rejectingRequest.sender.name}
           onConfirm={confirmRejectRequest}
           onCancel={() => {
             setRejectModalVisible(false);
@@ -364,5 +404,19 @@ const styles = StyleSheet.create({
   loadingText: {
     ...typography.body,
     color: colors.textSecondary,
+  },
+  emptyContainer: {
+    padding: spacing.xl,
+    alignItems: "center",
+  },
+  emptyText: {
+    ...typography.h3,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  emptySubtext: {
+    ...typography.body,
+    color: colors.gray,
+    textAlign: "center",
   },
 });
