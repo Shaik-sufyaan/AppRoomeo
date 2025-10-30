@@ -14,6 +14,9 @@ export interface User {
   photos: string[];
   roomPhotos?: string[];
   distance?: number;
+  // Online status (for chat)
+  isOnline?: boolean;
+  lastSeen?: string;
 }
 
 export interface Match {
@@ -68,6 +71,8 @@ export interface Message {
   read: boolean;
   readAt?: string;
   createdAt: string;
+  // Message delivery status
+  isDelivered?: boolean;
 }
 
 export interface MessageWithSender extends Message {
@@ -77,6 +82,23 @@ export interface MessageWithSender extends Message {
     photos: string[];
   };
   isMe?: boolean; // Helper for UI
+}
+
+// Enhanced message type supporting different message types
+export type MessageType = 'text' | 'split' | 'system';
+
+export interface EnhancedMessage extends Message {
+  type: MessageType;
+  splitRequest?: SplitRequest;
+}
+
+export interface EnhancedMessageWithSender extends EnhancedMessage {
+  sender: {
+    id: string;
+    name: string;
+    photos: string[];
+  };
+  isMe?: boolean;
 }
 
 export interface Conversation {
@@ -205,4 +227,52 @@ export interface NotificationCounts {
   expenses: number;
   matches: number;
   total: number;
+}
+
+// =====================================================
+// SPLIT REQUEST TYPES (for Share & Split Chat feature)
+// =====================================================
+
+export interface SplitDetail {
+  id?: string;
+  userId: string;
+  userName: string;
+  userInitials?: string;
+  amount: number;
+}
+
+export interface SplitRequest {
+  id: string;
+  messageId: string;
+  itemName: string;
+  itemEmoji: string;
+  totalAmount: number;
+  splits: SplitDetail[];
+  status: 'pending' | 'accepted' | 'declined';
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSplitRequestInput {
+  messageId: string;
+  itemName: string;
+  itemEmoji: string;
+  totalAmount: number;
+  splits: {
+    userId: string;
+    userName: string;
+    amount: number;
+  }[];
+}
+
+// =====================================================
+// TYPING INDICATOR TYPES
+// =====================================================
+
+export interface TypingIndicator {
+  conversationId: string;
+  userId: string;
+  isTyping: boolean;
+  updatedAt: string;
 }

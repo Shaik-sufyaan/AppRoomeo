@@ -47,6 +47,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     title: string;
     message: string;
     type: 'match' | 'message' | 'general';
+    senderName?: string;
+    senderPhoto?: string;
     screen?: string;
     screenParams?: any;
   }>({
@@ -130,28 +132,35 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       return;
     }
 
-    // Register push notification token
-    console.log('🔍 [NotificationContext] Registering push notifications...');
-    registerPushToken().then((result) => {
-      if (result.success) {
-        console.log('✅ [NotificationContext] Push notifications registered');
-      } else {
-        console.log('⚠️ [NotificationContext] Push registration failed:', result.error);
-      }
-    });
+    // Register push notification token (disabled in Expo Go)
+    registerPushToken();
 
     // Subscribe to notification table for real-time push notifications
-    console.log('🔍 [NotificationContext] Setting up notification subscription...');
     notificationChannelRef.current = subscribeToNotifications(
       user.id,
-      (notification: AppNotification) => {
-        console.log('🔔 [NotificationContext] New notification from DB:', notification);
+      async (notification: AppNotification) => {
+        // Fetch related user details if available
+        let senderName: string | undefined;
+        let senderPhoto: string | undefined;
+
+        if (notification.related_user_id) {
+          const { data: relatedUser } = await supabase
+            .from('profiles')
+            .select('name, photos')
+            .eq('id', notification.related_user_id)
+            .single();
+
+          senderName = relatedUser?.name;
+          senderPhoto = relatedUser?.photos?.[0];
+        }
 
         // Show in-app toast
         showInAppNotification(
           notification.title,
           notification.message,
           notification.type === 'new_message' ? 'message' : notification.type === 'match_request' ? 'match' : 'general',
+          senderName,
+          senderPhoto,
           notification.screen,
           notification.screen_params
         );
@@ -175,16 +184,29 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           table: 'match_requests',
           filter: `recipient_id=eq.${user.id}`,
         },
-        (payload) => {
-          console.log('🔔 New match request received!', payload);
+        async (payload) => {
           setNotificationCounts((prev) => ({
             ...prev,
             matchRequests: prev.matchRequests + 1,
             total: prev.total + 1,
           }));
 
-          // Show in-app notification
-          showInAppNotification('New match request!', 'Someone wants to match with you', 'match');
+          // Fetch requester details
+          const matchRequest = payload.new as any;
+          const { data: requester } = await supabase
+            .from('profiles')
+            .select('name, photos')
+            .eq('id', matchRequest.requester_id)
+            .single();
+
+          // Show in-app notification with requester info
+          showInAppNotification(
+            'New match request!',
+            `${requester?.name || 'Someone'} wants to match with you`,
+            'match',
+            requester?.name,
+            requester?.photos?.[0]
+          );
         }
       )
       .on(
@@ -196,7 +218,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           filter: `recipient_id=eq.${user.id}`,
         },
         (payload) => {
-          console.log('Match request updated', payload);
           // Reload counts as request might have been approved/rejected
           loadNotificationCounts();
         }
@@ -210,7 +231,6 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
           filter: `recipient_id=eq.${user.id}`,
         },
         () => {
-          console.log('Match request deleted');
           loadNotificationCounts();
         }
       )
@@ -242,15 +262,29 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
               .single();
 
             if (conversation) {
-              console.log('🔔 New message received!', newMessage);
               setNotificationCounts((prev) => ({
                 ...prev,
                 messages: prev.messages + 1,
                 total: prev.total + 1,
               }));
 
-              // Show in-app notification
-              showInAppNotification('New message', newMessage.text.substring(0, 50), 'message');
+              // Fetch sender details for notification
+              const { data: sender } = await supabase
+                .from('profiles')
+                .select('name, photos')
+                .eq('id', newMessage.sender_id)
+                .single();
+
+              // Show in-app notification with sender info
+              showInAppNotification(
+                'New message',
+                newMessage.text.substring(0, 50),
+                'message',
+                sender?.name,
+                sender?.photos?.[0],
+                `/chat/${newMessage.conversation_id}`,
+                { conversationId: newMessage.conversation_id }
+              );
             }
           }
         }
@@ -294,15 +328,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     title: string,
     body: string,
     type: 'match' | 'message' | 'general' = 'general',
+    senderName?: string,
+    senderPhoto?: string,
     screen?: string,
     screenParams?: any
   ) => {
-    console.log(`📬 ${title}: ${body}`);
-
     setToastData({
       title,
       message: body,
       type,
+      senderName,
+      senderPhoto,
       screen,
       screenParams,
     });
@@ -359,6 +395,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         title={toastData.title}
         message={toastData.message}
         type={toastData.type}
+        senderName={toastData.senderName}
+        senderPhoto={toastData.senderPhoto}
         onPress={handleToastPress}
         onDismiss={() => setToastVisible(false)}
       />

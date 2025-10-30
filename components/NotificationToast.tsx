@@ -4,6 +4,7 @@ import { Bell, MessageCircle, Users, X } from 'lucide-react-native';
 import colors from '@/constants/colors';
 import { typography } from '@/constants/typography';
 import { spacing } from '@/constants/spacing';
+import Avatar from './Avatar';
 
 const { width } = Dimensions.get('window');
 
@@ -12,6 +13,8 @@ interface NotificationToastProps {
   title: string;
   message: string;
   type?: 'match' | 'message' | 'general';
+  senderName?: string;
+  senderPhoto?: string;
   onPress?: () => void;
   onDismiss: () => void;
   duration?: number;
@@ -22,6 +25,8 @@ export default function NotificationToast({
   title,
   message,
   type = 'general',
+  senderName,
+  senderPhoto,
   onPress,
   onDismiss,
   duration = 4000,
@@ -115,14 +120,34 @@ export default function NotificationToast({
         onPress={handlePress}
         activeOpacity={onPress ? 0.7 : 1}
       >
-        <View style={styles.iconContainer}>{getIcon()}</View>
+        {/* Show sender photo for messages, or icon for other types */}
+        {type === 'message' && senderPhoto ? (
+          <Avatar uri={senderPhoto} size="small" />
+        ) : (
+          <View style={styles.iconContainer}>{getIcon()}</View>
+        )}
+
         <View style={styles.textContainer}>
-          <Text style={styles.title} numberOfLines={1}>
-            {title}
-          </Text>
-          <Text style={styles.message} numberOfLines={2}>
-            {message}
-          </Text>
+          {/* Show sender name for messages */}
+          {type === 'message' && senderName ? (
+            <>
+              <Text style={styles.senderName} numberOfLines={1}>
+                {senderName}
+              </Text>
+              <Text style={styles.message} numberOfLines={2}>
+                {message}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.title} numberOfLines={1}>
+                {title}
+              </Text>
+              <Text style={styles.message} numberOfLines={2}>
+                {message}
+              </Text>
+            </>
+          )}
         </View>
         <TouchableOpacity style={styles.closeButton} onPress={handleDismiss}>
           <X size={18} color={colors.white} />
@@ -171,6 +196,12 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.white,
     fontWeight: '600',
+  },
+  senderName: {
+    ...typography.body,
+    color: colors.white,
+    fontWeight: '700',
+    fontSize: 16,
   },
   message: {
     ...typography.bodySmall,

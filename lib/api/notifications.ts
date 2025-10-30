@@ -1,5 +1,7 @@
 import { supabase } from '../supabase';
-import * as Notifications from 'expo-notifications';
+// COMMENTED OUT FOR EXPO GO - Push notifications not supported in Expo Go SDK 53+
+// Use development build to enable push notifications
+// import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
@@ -35,14 +37,16 @@ export interface PushToken {
 // Push Notification Configuration
 // =====================================================
 
+// COMMENTED OUT FOR EXPO GO - Push notifications not supported in Expo Go SDK 53+
+// Use development build to enable push notifications
 // Configure how notifications are displayed
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+// Notifications.setNotificationHandler({
+//   handleNotification: async () => ({
+//     shouldShowAlert: true,
+//     shouldPlaySound: true,
+//     shouldSetBadge: true,
+//   }),
+// });
 
 // =====================================================
 // API Functions
@@ -50,11 +54,19 @@ Notifications.setNotificationHandler({
 
 /**
  * Register push notification token for the current user
+ * COMMENTED OUT FOR EXPO GO - Push notifications not supported in Expo Go SDK 53+
+ * Use development build to enable push notifications
  */
 export async function registerPushToken(): Promise<{
   success: boolean;
   error?: string;
 }> {
+  // DISABLED FOR EXPO GO
+  console.log('⚠️ [Notifications] Push token registration disabled in Expo Go');
+  console.log('💡 [Notifications] Use a development build to enable push notifications');
+  return { success: false, error: 'Push notifications not available in Expo Go' };
+
+  /* COMMENTED OUT FOR EXPO GO
   try {
     console.log('🔍 [Notifications] Registering push token...');
 
@@ -109,6 +121,7 @@ export async function registerPushToken(): Promise<{
     console.error('❌ [Notifications] Exception registering token:', error);
     return { success: false, error: error.message };
   }
+  */
 }
 
 /**
@@ -241,21 +254,22 @@ export function subscribeToNotifications(
         console.log('✅ [Notifications] New notification received:', payload.new);
         const notification = payload.new as AppNotification;
 
+        // COMMENTED OUT FOR EXPO GO - Local notifications not supported in Expo Go SDK 53+
         // Show local push notification
-        await Notifications.scheduleNotificationAsync({
-          content: {
-            title: notification.title,
-            body: notification.message,
-            data: {
-              screen: notification.screen,
-              params: notification.screen_params,
-              notificationId: notification.id,
-            },
-          },
-          trigger: null, // Show immediately
-        });
+        // await Notifications.scheduleNotificationAsync({
+        //   content: {
+        //     title: notification.title,
+        //     body: notification.message,
+        //     data: {
+        //       screen: notification.screen,
+        //       params: notification.screen_params,
+        //       notificationId: notification.id,
+        //     },
+        //   },
+        //   trigger: null, // Show immediately
+        // });
 
-        // Call callback
+        // Call callback (in-app toast will still show)
         onNewNotification(notification);
       }
     )
@@ -274,12 +288,19 @@ export async function unsubscribeFromNotifications(channel: RealtimeChannel): Pr
 
 /**
  * Send a local notification (for testing or immediate feedback)
+ * COMMENTED OUT FOR EXPO GO - Local notifications not supported in Expo Go SDK 53+
+ * Use development build to enable push notifications
  */
 export async function sendLocalNotification(
   title: string,
   body: string,
   data?: any
 ): Promise<void> {
+  // DISABLED FOR EXPO GO
+  console.log('⚠️ [Notifications] Local notification disabled in Expo Go:', title, body);
+  console.log('💡 [Notifications] Use a development build to enable notifications');
+
+  /* COMMENTED OUT FOR EXPO GO
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
@@ -288,4 +309,5 @@ export async function sendLocalNotification(
     },
     trigger: null,
   });
+  */
 }
