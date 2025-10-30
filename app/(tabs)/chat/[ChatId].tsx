@@ -29,7 +29,8 @@ import { supabase } from "@/lib/supabase";
 import { RealtimeChannel } from "@supabase/supabase-js";
 
 export default function ChatThreadScreen() {
-  const { chatId } = useLocalSearchParams<{ chatId: string }>();
+  const { ChatId } = useLocalSearchParams<{ ChatId: string }>();
+  const chatId = ChatId; // Use the correct param name from route
   const { user } = useAuth();
   const [message, setMessage] = useState<string>("");
   const [messages, setMessages] = useState<MessageWithSender[]>([]);
@@ -38,79 +39,228 @@ export default function ChatThreadScreen() {
   const [otherUser, setOtherUser] = useState<any>(null);
   const flatListRef = useRef<FlatList>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMessageIdRef = useRef<string | null>(null);
+
+  console.log('🔍 [ChatThread] Component rendered with:', { ChatId, chatId, userId: user?.id });
 
   // Load conversation details and messages
   useEffect(() => {
-    if (!chatId || !user) return;
+    console.log('🔍 [ChatThread] useEffect triggered:', { chatId, hasUser: !!user });
 
+    if (!chatId) {
+      console.error('❌ [ChatThread] No chatId in route params');
+      setIsLoading(false);
+      return;
+    }
+
+    if (!user) {
+      console.error('❌ [ChatThread] No user from AuthContext');
+      setIsLoading(false);
+      return;
+    }
+
+    console.log('✅ [ChatThread] Starting to load conversation...');
     loadConversationAndMessages();
 
     // Set up real-time subscription
-    channelRef.current = subscribeToMessages(chatId, handleNewMessage);
+    console.log('🔍 [ChatThread] Setting up real-time subscription...');
+    try {
+      channelRef.current = subscribeToMessages(chatId, handleNewMessage);
+      console.log('✅ [ChatThread] Real-time subscription created');
+    } catch (error) {
+      console.error('❌ [ChatThread] Failed to set up subscription:', error);
+    }
+
+    // Set up polling as fallback (check for new messages every 3 seconds)
+    console.log('🔍 [ChatThread] Setting up polling fallback...');
+    pollingIntervalRef.current = setInterval(async () => {
+      console.log('🔄 [ChatThread] Polling for new messages...');
+
+      // Get the latest message ID
+      const latestMessageId = messages.length > 0 ? messages[messages.length - 1].id : null;
+
+      // Only poll if we have messages (to get the reference point)
+      if (latestMessageId || lastMessageIdRef.current) {
+        const referenceId = latestMessageId || lastMessageIdRef.current;
+
+        // Fetch messages newer than the last one we have
+        const { data: newMessages } = await supabase
+          .from('messages')
+          .select(`
+            *,
+            sender:profiles!sender_id(id, name, photos)
+          `)
+          .eq('conversation_id', chatId)
+          .order('created_at', { ascending: true });
+
+        if (newMessages && newMessages.length > 0) {
+          // Filter out messages we already have
+          const messagesWeHave = new Set(messages.map(m => m.id));
+          const trulyNewMessages = newMessages.filter((msg: any) => !messagesWeHave.has(msg.id));
+
+          if (trulyNewMessages.length > 0) {
+            console.log(`✅ [ChatThread] Found ${trulyNewMessages.length} new messages via polling`);
+
+            trulyNewMessages.forEach((msg: any) => {
+              const messageWithSender: MessageWithSender = {
+                ...msg,
+                isMe: msg.sender_id === user?.id,
+              };
+              handleNewMessage(messageWithSender);
+            });
+          }
+        }
+      }
+    }, 3000); // Poll every 3 seconds
 
     // Mark conversation as read when entering
     markConversationAsRead(chatId);
 
-    // Cleanup subscription on unmount
+    // Cleanup subscription and polling on unmount
     return () => {
+      console.log('🔍 [ChatThread] Cleaning up subscriptions and polling');
       if (channelRef.current) {
         unsubscribe(channelRef.current);
+      }
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
       }
     };
   }, [chatId, user]);
 
   const loadConversationAndMessages = async () => {
-    setIsLoading(true);
+    try {
+      console.log('🔍 [ChatThread] Starting to load conversation:', chatId);
+      console.log('🔍 [ChatThread] Current user:', user?.id);
+      setIsLoading(true);
 
-    // Get conversation details to find other user
-    const { data: conversation } = await supabase
-      .from('conversations')
-      .select(`
-        *,
-        user_a:profiles!user_a_id(id, name, photos, user_type, age),
-        user_b:profiles!user_b_id(id, name, photos, user_type, age)
-      `)
-      .eq('id', chatId)
-      .single();
+      // Get conversation details to find other user
+      console.log('🔍 [ChatThread] Querying conversation from database...');
+      const { data: conversation, error: convError } = await supabase
+        .from('conversations')
+        .select(`
+          *,
+          user_a:profiles!user_a_id(id, name, photos, user_type, age),
+          user_b:profiles!user_b_id(id, name, photos, user_type, age)
+        `)
+        .eq('id', chatId)
+        .single();
 
-    if (conversation) {
+      console.log('🔍 [ChatThread] Conversation query result:', { conversation, convError });
+
+      if (convError || !conversation) {
+        console.error('❌ [ChatThread] Error loading conversation:', convError);
+        alert(`Failed to load conversation: ${convError?.message || 'Conversation not found'}`);
+        setIsLoading(false);
+        return;
+      }
+
+      console.log('🔍 [ChatThread] Conversation data:', {
+        id: conversation.id,
+        user_a_id: conversation.user_a_id,
+        user_b_id: conversation.user_b_id,
+        user_a: conversation.user_a,
+        user_b: conversation.user_b,
+      });
+
       // Determine the other user
       const other = conversation.user_a_id === user?.id
         ? conversation.user_b
         : conversation.user_a;
+
+      console.log('🔍 [ChatThread] Other user:', other);
+
+      if (!other) {
+        console.error('❌ [ChatThread] Other user profile not found');
+        alert('The other user\'s profile could not be loaded');
+        setIsLoading(false);
+        return;
+      }
+
       setOtherUser(other);
+      console.log('✅ [ChatThread] Set other user:', other.name);
+
+      // Load messages
+      console.log('🔍 [ChatThread] Loading messages...');
+      const result = await getMessages(chatId);
+      console.log('🔍 [ChatThread] Messages result:', result);
+
+      if (result.success && result.data) {
+        // Add isMe flag to messages
+        const messagesWithIsMe = result.data.map(msg => ({
+          ...msg,
+          isMe: msg.sender_id === user?.id,
+        }));
+        setMessages(messagesWithIsMe);
+        console.log(`✅ [ChatThread] Loaded ${messagesWithIsMe.length} messages`);
+
+        // Update last message ID ref for polling
+        if (messagesWithIsMe.length > 0) {
+          lastMessageIdRef.current = messagesWithIsMe[messagesWithIsMe.length - 1].id;
+          console.log('🔍 [ChatThread] Last message ID:', lastMessageIdRef.current);
+        }
+
+        // Scroll to bottom
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: false });
+        }, 100);
+      } else {
+        console.error('❌ [ChatThread] Error loading messages:', result.error);
+        // Still show the chat even if there are no messages
+        setMessages([]);
+      }
+
+      console.log('✅ [ChatThread] Finished loading conversation');
+      setIsLoading(false);
+    } catch (error) {
+      console.error('❌ [ChatThread] Exception in loadConversationAndMessages:', error);
+      alert(`Error loading chat: ${error}`);
+      setIsLoading(false);
     }
-
-    // Load messages
-    const result = await getMessages(chatId);
-    if (result.success && result.data) {
-      // Add isMe flag to messages
-      const messagesWithIsMe = result.data.map(msg => ({
-        ...msg,
-        isMe: msg.sender_id === user?.id,
-      }));
-      setMessages(messagesWithIsMe);
-
-      // Scroll to bottom
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: false });
-      }, 100);
-    }
-
-    setIsLoading(false);
   };
 
-  const handleNewMessage = (newMessage: any) => {
+  const handleNewMessage = async (newMessage: any) => {
+    console.log('🔔 [ChatThread] handleNewMessage called:', {
+      messageId: newMessage.id,
+      senderId: newMessage.sender_id,
+      currentUserId: user?.id,
+      text: newMessage.text?.substring(0, 50)
+    });
+
+    // Check if message already exists (prevent duplicates)
+    const messageExists = messages.some(m => m.id === newMessage.id);
+    if (messageExists) {
+      console.log('⚠️ [ChatThread] Message already exists, skipping');
+      return;
+    }
+
+    // Fetch sender details if not current user
+    let senderData = otherUser;
+    if (newMessage.sender_id !== user?.id && !senderData) {
+      console.log('🔍 [ChatThread] Fetching sender details...');
+      const { data: sender } = await supabase
+        .from('profiles')
+        .select('id, name, photos')
+        .eq('id', newMessage.sender_id)
+        .single();
+      senderData = sender;
+    }
+
     // Add the new message to the list
     const messageWithSender: MessageWithSender = {
       ...newMessage,
       isMe: newMessage.sender_id === user?.id,
       sender: newMessage.sender_id === user?.id
         ? { id: user.id, name: 'You', photos: [] }
-        : otherUser,
+        : senderData || { id: newMessage.sender_id, name: 'Unknown', photos: [] },
     };
 
+    console.log('✅ [ChatThread] Adding message to list');
     setMessages(prev => [...prev, messageWithSender]);
+
+    // Update last message ID ref
+    lastMessageIdRef.current = newMessage.id;
 
     // Scroll to bottom
     setTimeout(() => {
@@ -119,6 +269,7 @@ export default function ChatThreadScreen() {
 
     // Mark as read if not sent by current user
     if (newMessage.sender_id !== user?.id) {
+      console.log('🔍 [ChatThread] Marking message as read');
       markConversationAsRead(chatId);
     }
   };
@@ -127,12 +278,16 @@ export default function ChatThreadScreen() {
     if (!message.trim() || isSending) return;
 
     const messageText = message.trim();
+    console.log('🔍 [ChatThread] Sending message:', messageText.substring(0, 50));
     setMessage("");
     setIsSending(true);
 
     const result = await sendMessage(chatId, messageText);
+    console.log('🔍 [ChatThread] Send message result:', result);
 
     if (result.success && result.data) {
+      console.log('✅ [ChatThread] Message sent successfully:', result.data.id);
+
       // Message will be added via real-time subscription
       // But we can add it optimistically for better UX
       const optimisticMessage: MessageWithSender = {
@@ -145,13 +300,21 @@ export default function ChatThreadScreen() {
         },
       };
 
-      setMessages(prev => [...prev, optimisticMessage]);
+      // Check if message already exists before adding
+      const messageExists = messages.some(m => m.id === result.data!.id);
+      if (!messageExists) {
+        console.log('✅ [ChatThread] Adding optimistic message to UI');
+        setMessages(prev => [...prev, optimisticMessage]);
 
-      // Scroll to bottom
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+        // Scroll to bottom
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      } else {
+        console.log('⚠️ [ChatThread] Message already in list (from realtime)');
+      }
     } else {
+      console.error('❌ [ChatThread] Failed to send message:', result.error);
       // Show error - restore message text
       setMessage(messageText);
       alert(result.error || 'Failed to send message');
@@ -215,7 +378,7 @@ export default function ChatThreadScreen() {
             >
               {!item.isMe && otherUser.photos?.[0] && (
                 <Avatar
-                  uri={otherUser.photos[0]}
+                  uri={otherUser.photos?.[0]}
                   size="small"
                   style={styles.avatar}
                 />

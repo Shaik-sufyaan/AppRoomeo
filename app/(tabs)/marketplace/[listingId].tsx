@@ -141,7 +141,7 @@ export default function ListingDetailScreen() {
 
             <Text style={styles.sectionTitle}>Seller</Text>
             <View style={styles.sellerCard}>
-              <Avatar uri={listing.seller.photos[0]} size="medium" />
+              <Avatar uri={listing.seller.photos?.[0]} size="medium" />
               <View style={styles.sellerInfo}>
                 <Text style={styles.sellerName}>{listing.seller.name}</Text>
                 <Text style={styles.sellerDetails}>

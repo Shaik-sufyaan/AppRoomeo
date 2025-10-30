@@ -123,7 +123,7 @@ export default function MarketplaceScreen() {
                   <Text style={styles.location}>{item.location}</Text>
                   <View style={styles.sellerRow}>
                     <View style={styles.seller}>
-                      <Avatar uri={item.seller.photos[0]} size="small" />
+                      <Avatar uri={item.seller.photos?.[0]} size="small" />
                       <Text style={styles.sellerName}>{item.seller.name}</Text>
                     </View>
                     <View style={styles.listingActions}>

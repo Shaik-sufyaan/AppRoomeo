@@ -94,23 +94,59 @@ export default function ChatScreen() {
 
   // Handle approve request
   const handleApproveRequest = async (requestId: string) => {
+    console.log('🔍 [ChatScreen] Approving match request:', requestId);
     const request = matchRequests.find((r) => r.id === requestId);
-    if (!request) return;
+    if (!request || !request.user) {
+      console.error('❌ [ChatScreen] Request not found or missing user');
+      return;
+    }
 
+    console.log('🔍 [ChatScreen] Request found:', {
+      id: request.id,
+      senderId: request.senderId,
+      userName: request.user.name
+    });
+
+    console.log('🔍 [ChatScreen] Calling approveMatchRequest...');
     const result = await approveMatchRequest(requestId);
+    console.log('🔍 [ChatScreen] Approve result:', result);
 
     if (result.success) {
       // Create conversation with the matched user
-      await getOrCreateConversation(request.sender_id, 'match', result.data?.match_id);
+      console.log('🔍 [ChatScreen] Creating conversation with user:', request.senderId);
+      const convResult = await getOrCreateConversation(request.senderId, 'match', result.data?.match_id);
+      console.log('🔍 [ChatScreen] Conversation result:', convResult);
+
+      if (!convResult.success) {
+        console.error('❌ [ChatScreen] Failed to create conversation:', convResult.error);
+        alert(`Failed to create conversation: ${convResult.error}`);
+      } else {
+        console.log('✅ [ChatScreen] Conversation created:', convResult.data?.conversation_id);
+      }
 
       // Show celebration modal
-      setCelebratedUser(request.sender);
+      console.log('🔍 [ChatScreen] Showing celebration modal');
+      setCelebratedUser({
+        id: request.user.id,
+        name: request.user.name,
+        age: request.user.age,
+        workStatus: request.user.workStatus,
+        smoker: request.user.smoker || false,
+        pets: request.user.pets || false,
+        hasPlace: request.user.hasPlace,
+        photos: request.user.photos || [],
+      });
       setIsMutualMatch(result.data?.is_mutual || false);
       setCelebrationModalVisible(true);
 
       // Reload requests and conversations
+      console.log('🔍 [ChatScreen] Reloading requests and conversations...');
       await loadMatchRequests();
       await loadConversations();
+      console.log('✅ [ChatScreen] Finished approval process');
+    } else {
+      console.error('❌ [ChatScreen] Failed to approve request:', result.error);
+      alert(`Failed to approve match: ${result.error}`);
     }
   };
 
@@ -141,14 +177,24 @@ export default function ChatScreen() {
 
   // Navigate to chat with matched user
   const handleSendMessage = async () => {
+    console.log('🔍 [ChatScreen] Send message clicked');
     setCelebrationModalVisible(false);
     if (celebratedUser) {
+      console.log('🔍 [ChatScreen] Getting conversation for user:', celebratedUser.id);
       // Get or create conversation with the matched user
       const result = await getOrCreateConversation(celebratedUser.id, 'match');
+      console.log('🔍 [ChatScreen] Get conversation result:', result);
+
       if (result.success && result.data) {
         // Navigate to the conversation
+        console.log('✅ [ChatScreen] Navigating to chat:', result.data.conversation_id);
         router.push(`/chat/${result.data.conversation_id}`);
+      } else {
+        console.error('❌ [ChatScreen] Failed to get conversation:', result.error);
+        alert(`Failed to open chat: ${result.error}`);
       }
+    } else {
+      console.error('❌ [ChatScreen] No celebrated user');
     }
   };
 
@@ -275,10 +321,10 @@ export default function ChatScreen() {
       )}
 
       {/* Reject Confirmation Modal */}
-      {rejectingRequest && (
+      {rejectingRequest && rejectingRequest.user && (
         <RejectConfirmationModal
           visible={rejectModalVisible}
-          userName={rejectingRequest.sender.name}
+          userName={rejectingRequest.user.name}
           onConfirm={confirmRejectRequest}
           onCancel={() => {
             setRejectModalVisible(false);

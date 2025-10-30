@@ -16,21 +16,21 @@ export interface Conversation {
 }
 
 export interface ConversationWithDetails extends Conversation {
-  other_user: {
+  otherUser: {
     id: string;
     name: string;
     photos: string[];
     user_type: 'looking-for-place' | 'finding-roommate';
     age: number;
   };
-  last_message?: {
+  lastMessage?: {
     id: string;
     text: string;
     sender_id: string;
     created_at: string;
     read: boolean;
   };
-  unread_count: number;
+  unreadCount: number;
 }
 
 export interface Message {
@@ -69,12 +69,18 @@ export async function getOrCreateConversation(
   error?: string;
 }> {
   try {
+    console.log('🔍 [Chat API] getOrCreateConversation called:', { otherUserId, contextType, contextId });
+
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
+      console.error('❌ [Chat API] Not authenticated:', userError);
       return { success: false, error: 'Not authenticated' };
     }
 
+    console.log('🔍 [Chat API] Current user:', user.id);
+
     // Call database function to get or create conversation
+    console.log('🔍 [Chat API] Calling RPC function get_or_create_conversation...');
     const { data: conversationId, error: convError } = await supabase
       .rpc('get_or_create_conversation', {
         user_1_uuid: user.id,
@@ -83,14 +89,17 @@ export async function getOrCreateConversation(
         context_id_param: contextId || null,
       });
 
+    console.log('🔍 [Chat API] RPC result:', { conversationId, convError });
+
     if (convError) {
-      console.error('Error getting/creating conversation:', convError);
+      console.error('❌ [Chat API] Error getting/creating conversation:', convError);
       return { success: false, error: convError.message };
     }
 
+    console.log('✅ [Chat API] Successfully got/created conversation:', conversationId);
     return { success: true, data: { conversation_id: conversationId } };
   } catch (error: any) {
-    console.error('Exception in getOrCreateConversation:', error);
+    console.error('❌ [Chat API] Exception in getOrCreateConversation:', error);
     return { success: false, error: error.message };
   }
 }
@@ -105,12 +114,18 @@ export async function getConversations(): Promise<{
   error?: string;
 }> {
   try {
+    console.log('🔍 [Chat API] getConversations called');
+
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
+      console.error('❌ [Chat API] Not authenticated:', userError);
       return { success: false, error: 'Not authenticated' };
     }
 
+    console.log('🔍 [Chat API] Current user:', user.id);
+
     // Get all conversations for the user
+    console.log('🔍 [Chat API] Querying conversations...');
     const { data: conversations, error: convError } = await supabase
       .from('conversations')
       .select(`
@@ -121,8 +136,10 @@ export async function getConversations(): Promise<{
       .or(`user_a_id.eq.${user.id},user_b_id.eq.${user.id}`)
       .order('updated_at', { ascending: false });
 
+    console.log('🔍 [Chat API] Conversations query result:', { count: conversations?.length, convError });
+
     if (convError) {
-      console.error('Error fetching conversations:', convError);
+      console.error('❌ [Chat API] Error fetching conversations:', convError);
       return { success: false, error: convError.message };
     }
 
@@ -131,6 +148,11 @@ export async function getConversations(): Promise<{
       (conversations || []).map(async (conv: any) => {
         // Determine the other user
         const otherUser = conv.user_a_id === user.id ? conv.user_b : conv.user_a;
+
+        // Skip conversations where the other user profile doesn't exist
+        if (!otherUser) {
+          return null;
+        }
 
         // Get last message
         const { data: lastMessage } = await supabase
@@ -157,14 +179,17 @@ export async function getConversations(): Promise<{
           context_id: conv.context_id,
           created_at: conv.created_at,
           updated_at: conv.updated_at,
-          other_user: otherUser,
-          last_message: lastMessage || undefined,
-          unread_count: unreadCount || 0,
+          otherUser: otherUser,
+          lastMessage: lastMessage || undefined,
+          unreadCount: unreadCount || 0,
         };
       })
     );
 
-    return { success: true, data: conversationsWithDetails };
+    // Filter out null conversations (where other user doesn't exist)
+    const validConversations = conversationsWithDetails.filter((conv): conv is ConversationWithDetails => conv !== null);
+
+    return { success: true, data: validConversations };
   } catch (error: any) {
     console.error('Exception in getConversations:', error);
     return { success: false, error: error.message };
@@ -180,27 +205,40 @@ export async function getMessages(conversationId: string): Promise<{
   error?: string;
 }> {
   try {
+    console.log('🔍 [Chat API] getMessages called for conversation:', conversationId);
+
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
+      console.error('❌ [Chat API] Not authenticated:', userError);
       return { success: false, error: 'Not authenticated' };
     }
 
+    console.log('🔍 [Chat API] Current user:', user.id);
+
     // Verify user is part of this conversation
+    console.log('🔍 [Chat API] Verifying user is part of conversation...');
     const { data: conversation, error: convError } = await supabase
       .from('conversations')
       .select('user_a_id, user_b_id')
       .eq('id', conversationId)
       .single();
 
+    console.log('🔍 [Chat API] Conversation check:', { conversation, convError });
+
     if (convError || !conversation) {
+      console.error('❌ [Chat API] Conversation not found:', convError);
       return { success: false, error: 'Conversation not found' };
     }
 
     if (conversation.user_a_id !== user.id && conversation.user_b_id !== user.id) {
+      console.error('❌ [Chat API] User not authorized for this conversation');
       return { success: false, error: 'Unauthorized' };
     }
 
+    console.log('✅ [Chat API] User is authorized');
+
     // Fetch messages with sender details
+    console.log('🔍 [Chat API] Fetching messages...');
     const { data: messages, error: messagesError } = await supabase
       .from('messages')
       .select(`
@@ -210,14 +248,17 @@ export async function getMessages(conversationId: string): Promise<{
       .eq('conversation_id', conversationId)
       .order('created_at', { ascending: true });
 
+    console.log('🔍 [Chat API] Messages query result:', { count: messages?.length, messagesError });
+
     if (messagesError) {
-      console.error('Error fetching messages:', messagesError);
+      console.error('❌ [Chat API] Error fetching messages:', messagesError);
       return { success: false, error: messagesError.message };
     }
 
+    console.log(`✅ [Chat API] Successfully fetched ${messages?.length || 0} messages`);
     return { success: true, data: messages as any };
   } catch (error: any) {
-    console.error('Exception in getMessages:', error);
+    console.error('❌ [Chat API] Exception in getMessages:', error);
     return { success: false, error: error.message };
   }
 }
@@ -369,6 +410,8 @@ export function subscribeToMessages(
   conversationId: string,
   onNewMessage: (message: Message) => void
 ): RealtimeChannel {
+  console.log('🔍 [Chat API] Setting up message subscription for conversation:', conversationId);
+
   const channel = supabase
     .channel(`messages:${conversationId}`)
     .on(
@@ -380,10 +423,21 @@ export function subscribeToMessages(
         filter: `conversation_id=eq.${conversationId}`,
       },
       (payload) => {
+        console.log('🔔 [Chat API] New message received via Realtime:', payload.new);
         onNewMessage(payload.new as Message);
       }
     )
-    .subscribe();
+    .subscribe((status, err) => {
+      if (status === 'SUBSCRIBED') {
+        console.log('✅ [Chat API] Successfully subscribed to messages channel');
+      } else if (status === 'CHANNEL_ERROR') {
+        console.error('❌ [Chat API] Channel subscription error:', err);
+      } else if (status === 'TIMED_OUT') {
+        console.error('❌ [Chat API] Channel subscription timed out');
+      } else {
+        console.log('🔍 [Chat API] Channel status:', status);
+      }
+    });
 
   return channel;
 }

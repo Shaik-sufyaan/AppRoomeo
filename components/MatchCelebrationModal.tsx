@@ -67,7 +67,7 @@ export default function MatchCelebrationModal({
             <View style={styles.avatars}>
               <View style={styles.avatarContainer}>
                 <Avatar
-                  uri={currentUser.photos[0]}
+                  uri={currentUser.photos?.[0]}
                   name={currentUser.name}
                   size="xlarge"
                 />
@@ -80,7 +80,7 @@ export default function MatchCelebrationModal({
 
               <View style={styles.avatarContainer}>
                 <Avatar
-                  uri={matchedUser.photos[0]}
+                  uri={matchedUser.photos?.[0]}
                   name={matchedUser.name}
                   size="xlarge"
                 />

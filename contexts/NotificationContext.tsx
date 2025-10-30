@@ -1,9 +1,15 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './AuthContext';
 import { RealtimeChannel } from '@supabase/supabase-js';
 import NotificationToast from '@/components/NotificationToast';
 import { useRouter } from 'expo-router';
+import {
+  registerPushToken,
+  subscribeToNotifications,
+  unsubscribeFromNotifications,
+  AppNotification,
+} from '@/lib/api/notifications';
 
 interface NotificationCounts {
   matchRequests: number;
@@ -33,6 +39,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   const [matchRequestChannel, setMatchRequestChannel] = useState<RealtimeChannel | null>(null);
   const [messageChannel, setMessageChannel] = useState<RealtimeChannel | null>(null);
+  const notificationChannelRef = useRef<RealtimeChannel | null>(null);
 
   // Toast notification state
   const [toastVisible, setToastVisible] = useState(false);
@@ -40,6 +47,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     title: string;
     message: string;
     type: 'match' | 'message' | 'general';
+    screen?: string;
+    screenParams?: any;
   }>({
     title: '',
     message: '',
@@ -114,8 +123,43 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         supabase.removeChannel(messageChannel);
         setMessageChannel(null);
       }
+      if (notificationChannelRef.current) {
+        unsubscribeFromNotifications(notificationChannelRef.current);
+        notificationChannelRef.current = null;
+      }
       return;
     }
+
+    // Register push notification token
+    console.log('🔍 [NotificationContext] Registering push notifications...');
+    registerPushToken().then((result) => {
+      if (result.success) {
+        console.log('✅ [NotificationContext] Push notifications registered');
+      } else {
+        console.log('⚠️ [NotificationContext] Push registration failed:', result.error);
+      }
+    });
+
+    // Subscribe to notification table for real-time push notifications
+    console.log('🔍 [NotificationContext] Setting up notification subscription...');
+    notificationChannelRef.current = subscribeToNotifications(
+      user.id,
+      (notification: AppNotification) => {
+        console.log('🔔 [NotificationContext] New notification from DB:', notification);
+
+        // Show in-app toast
+        showInAppNotification(
+          notification.title,
+          notification.message,
+          notification.type === 'new_message' ? 'message' : notification.type === 'match_request' ? 'match' : 'general',
+          notification.screen,
+          notification.screen_params
+        );
+
+        // Refresh counts
+        loadNotificationCounts();
+      }
+    );
 
     // Load initial counts
     loadNotificationCounts();
@@ -246,20 +290,38 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   }, [user, loadNotificationCounts]);
 
   // Helper function to show in-app notification
-  const showInAppNotification = (title: string, body: string, type: 'match' | 'message' | 'general' = 'general') => {
+  const showInAppNotification = (
+    title: string,
+    body: string,
+    type: 'match' | 'message' | 'general' = 'general',
+    screen?: string,
+    screenParams?: any
+  ) => {
     console.log(`📬 ${title}: ${body}`);
 
     setToastData({
       title,
       message: body,
       type,
+      screen,
+      screenParams,
     });
     setToastVisible(true);
   };
 
   const handleToastPress = () => {
-    // Navigate to chat screen when notification is tapped
-    router.push('/chat');
+    // Navigate based on notification data
+    if (toastData.screen && toastData.screenParams) {
+      const { conversationId } = toastData.screenParams;
+      if (conversationId) {
+        router.push(`/chat/${conversationId}`);
+      } else {
+        router.push('/chat');
+      }
+    } else {
+      router.push('/chat');
+    }
+    setToastVisible(false);
   };
 
   const refreshNotifications = useCallback(async () => {

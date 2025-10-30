@@ -225,6 +225,7 @@ export async function approveMatchRequest(requestId: string): Promise<{
   success: boolean;
   data?: {
     match_id: string;
+    is_mutual: boolean;
   };
   error?: string;
 }> {
@@ -263,6 +264,7 @@ export async function approveMatchRequest(requestId: string): Promise<{
       success: true,
       data: {
         match_id: matchId,
+        is_mutual: true, // Always true when approving a request
       },
     };
   } catch (error: any) {
@@ -363,9 +365,36 @@ export async function getReceivedMatchRequests(): Promise<{
       return { success: false, error: 'Failed to fetch requests' };
     }
 
+    // Transform data to match expected interface (map sender to user)
+    const transformedRequests = requests?.map((request: any) => ({
+      id: request.id,
+      senderId: request.sender_id,
+      recipientId: request.recipient_id,
+      status: request.status,
+      message: request.message,
+      createdAt: request.created_at,
+      updatedAt: request.updated_at,
+      expiresAt: request.expires_at,
+      user: request.sender ? {
+        id: request.sender.id,
+        name: request.sender.name,
+        age: request.sender.age,
+        userType: request.sender.user_type,
+        college: request.sender.college,
+        photos: request.sender.photos || [],
+        workStatus: request.sender.work_status,
+        hasPlace: request.sender.has_place,
+        smoker: false, // Default values for optional fields
+        pets: false,
+        about: undefined,
+        roomPhotos: undefined,
+        distance: undefined,
+      } : undefined,
+    }));
+
     return {
       success: true,
-      data: requests as any,
+      data: transformedRequests as any,
     };
   } catch (error: any) {
     console.error('Error in getReceivedMatchRequests:', error);

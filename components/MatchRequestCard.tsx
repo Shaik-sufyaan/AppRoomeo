@@ -59,10 +59,16 @@ export default function MatchRequestCard({
 
   const isLoading = isApproving || isRejecting;
 
+  // Safety check: make sure user data exists
+  if (!request.user) {
+    console.error('MatchRequestCard: request.user is undefined', request);
+    return null;
+  }
+
   return (
     <Card style={styles.card} testID={testID}>
       <View style={styles.header}>
-        <Avatar uri={request.user.photos[0]} size="medium" />
+        <Avatar uri={request.user.photos?.[0]} size="medium" />
         <View style={styles.userInfo}>
           <Text style={styles.name}>
             {request.user.name}, {request.user.age}

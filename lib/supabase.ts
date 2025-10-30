@@ -21,7 +21,20 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     detectSessionInUrl: false,
   },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
+  global: {
+    headers: {
+      'x-client-info': 'supabase-js-react-native',
+    },
+  },
 });
+
+// Log realtime connection status
+console.log('🔍 [Supabase] Client initialized with Realtime support');
 
 // Type definitions for database
 export type Database = {

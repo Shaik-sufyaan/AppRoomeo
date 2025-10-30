@@ -14,21 +14,44 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mycrib.app"
+      "bundleIdentifier": "com.mycrib.app",
+      "infoPlist": {
+        "UIBackgroundModes": ["remote-notification"]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.mycrib.app"
+      "package": "com.mycrib.app",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "WAKE_LOCK"
+      ],
+      "googleServicesFile": "./google-services.json"
+    },
+    "notification": {
+      "icon": "./assets/images/notification-icon.png",
+      "color": "#000000",
+      "androidMode": "default",
+      "androidCollapsedTitle": "New notification"
     },
     "web": {
       "favicon": "./assets/images/favicon.png",
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#ffffff",
+          "sounds": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

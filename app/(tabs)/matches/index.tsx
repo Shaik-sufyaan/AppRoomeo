@@ -37,6 +37,7 @@ import {
   sendMatchRequest,
   recordSwipe,
 } from "@/lib/api/matches";
+import { getOrCreateConversation } from "@/lib/api/chat";
 import { supabase } from "@/lib/supabase";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -159,10 +160,21 @@ export default function MatchesScreen() {
 
         if (result.success) {
           if (result.data?.is_mutual) {
-            // Show mutual match modal
-            setMatchedUser(swipedUser);
-            setIsMutualMatch(true);
-            setShowMatchModal(true);
+            // Mutual match! Create conversation immediately
+            const conversationResult = await getOrCreateConversation(
+              swipedUser.id,
+              'match',
+              result.data.match_id
+            );
+
+            if (conversationResult.success) {
+              // Show mutual match modal
+              setMatchedUser(swipedUser);
+              setIsMutualMatch(true);
+              setShowMatchModal(true);
+            } else {
+              Alert.alert('Match Created!', `You matched with ${swipedUser.name}! But failed to create chat.`);
+            }
           } else {
             // Show success toast
             Alert.alert("Request Sent!", `Request sent to ${swipedUser.name}!`);
@@ -204,11 +216,25 @@ export default function MatchesScreen() {
   };
 
 
-  const handleSendMessage = () => {
-    if (matchedUser) {
+  const handleSendMessage = async () => {
+    if (!matchedUser) return;
+
+    try {
       setShowMatchModal(false);
-      // Navigate to chat with matched user
-      router.push(`/chat/${matchedUser.id}`);
+
+      // Create or get conversation with matched user
+      const result = await getOrCreateConversation(matchedUser.id, 'match');
+
+      if (result.success && result.data) {
+        // Navigate to the conversation (not user ID!)
+        router.push(`/chat/${result.data.conversation_id}`);
+      } else {
+        Alert.alert('Error', 'Failed to create conversation. Please try again.');
+        console.error('Failed to create conversation:', result.error);
+      }
+    } catch (error) {
+      console.error('Error in handleSendMessage:', error);
+      Alert.alert('Error', 'Something went wrong. Please try again.');
     }
   };
 
@@ -356,7 +382,7 @@ export default function MatchesScreen() {
                       {...panResponder.panHandlers}
                     >
                       <Image
-                        source={{ uri: user.photos[0] }}
+                        source={{ uri: user.photos?.[0] }}
                         style={styles.cardImage}
                         resizeMode="cover"
                       />
@@ -445,7 +471,7 @@ export default function MatchesScreen() {
                 return (
                   <View key={user.id} style={[styles.card, { zIndex: 1 }]}>
                     <Image
-                      source={{ uri: user.photos[0] }}
+                      source={{ uri: user.photos?.[0] }}
                       style={styles.cardImage}
                       resizeMode="cover"
                     />
