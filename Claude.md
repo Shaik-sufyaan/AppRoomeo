@@ -40,14 +40,7 @@ Create a complete Supabase backend with:
    - Current mock data structure
    - UI components and their data requirements
 
-2. **Create `projectplan.md`** with:
-   - **Overview**: High-level architecture summary
-   - **Database Schema**: List all tables with fields and relationships
-   - **File Structure**: New files/folders to create
-   - **Task Checklist**: Granular todo items (check boxes `- [ ]`)
-   - **Risk Assessment**: Potential issues or blockers
-
-3. **STOP and wait for my approval** before proceeding
+2. **STOP and wait for my approval** before proceeding
 
 ### Phase 2: Implementation (After approval)
 Work through tasks **one at a time** in this order:

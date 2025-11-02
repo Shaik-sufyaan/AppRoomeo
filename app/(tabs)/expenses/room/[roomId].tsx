@@ -24,12 +24,16 @@ import { typography } from "@/constants/typography";
 import { spacing } from "@/constants/spacing";
 import Card from "@/components/Card";
 import Button from "@/components/Button";
+import Avatar from "@/components/Avatar";
+import SettlementModal from "@/components/SettlementModal";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   getRoomDetails,
   markSplitAsPaid,
+  submitSettlement,
   ExpenseRoom,
   Expense,
+  PaymentMethod,
 } from "@/lib/api/expenses";
 
 export default function RoomDetailsScreen() {
@@ -42,6 +46,7 @@ export default function RoomDetailsScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedExpense, setExpandedExpense] = useState<string | null>(null);
+  const [showSettlementModal, setShowSettlementModal] = useState(false);
 
   useEffect(() => {
     if (roomId && typeof roomId === 'string') {
@@ -86,9 +91,45 @@ export default function RoomDetailsScreen() {
     }
   };
 
-  const getUserName = (userId: string) => {
+  const getUserName = (userId: string, userName?: string) => {
     if (userId === user?.id) return 'You';
-    return 'User';
+    return userName || 'User';
+  };
+
+  const handleSubmitSettlement = async (
+    amount: number,
+    paymentMethod: PaymentMethod,
+    proofImage?: string,
+    note?: string
+  ) => {
+    if (!room || typeof roomId !== 'string') return;
+
+    try {
+      const result = await submitSettlement(
+        roomId,
+        room.created_by,
+        amount,
+        paymentMethod,
+        proofImage,
+        note
+      );
+
+      if (result.success) {
+        alert('Settlement submitted successfully! Waiting for approval.');
+        await loadRoomDetails();
+      } else {
+        throw new Error(result.error || 'Failed to submit settlement');
+      }
+    } catch (error: any) {
+      throw error;
+    }
+  };
+
+  // Get the room creator's name
+  const getRoomCreatorName = () => {
+    if (!room) return '';
+    const creator = room.members.find((m) => m.user_id === room.created_by);
+    return creator?.user?.name || 'Room Creator';
   };
 
   if (isLoading) {
@@ -158,6 +199,29 @@ export default function RoomDetailsScreen() {
             </View>
           </Card>
 
+          {/* Members Card */}
+          <Card style={styles.membersCard}>
+            <Text style={styles.membersTitle}>Members</Text>
+            <View style={styles.membersList}>
+              {room.members.map((member) => (
+                <View key={member.id} style={styles.memberItem}>
+                  <Avatar
+                    uri={member.user?.photos?.[0]}
+                    size="medium"
+                  />
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName}>
+                      {member.user_id === user?.id ? 'You' : (member.user?.name || 'User')}
+                    </Text>
+                    <Text style={styles.memberRole}>
+                      {member.role === 'admin' ? 'Admin' : 'Member'}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </Card>
+
           {/* Balance Card */}
           <Card style={styles.balanceCard}>
             <Text style={styles.balanceLabel}>Your Balance</Text>
@@ -183,6 +247,17 @@ export default function RoomDetailsScreen() {
                   : "You are owed this amount"
                 : "You owe this amount"}
             </Text>
+
+            {/* Settle Up Button - Only show if user owes money and is not the creator */}
+            {balance < 0 && user?.id !== room.created_by && (
+              <Button
+                title="Settle Up"
+                onPress={() => setShowSettlementModal(true)}
+                variant="primary"
+                style={styles.settleUpButton}
+                testID="settle-up-button"
+              />
+            )}
           </Card>
 
           {/* Expenses List */}
@@ -247,12 +322,13 @@ export default function RoomDetailsScreen() {
                         {expense.splits.map((split) => {
                           const isCurrentUser = split.user_id === user?.id;
                           const splitPayer = split.user_id === expense.paid_by;
+                          const splitUserName = split.user?.name;
 
                           return (
                             <View key={split.id} style={styles.splitRow}>
                               <View style={styles.splitInfo}>
                                 <Text style={styles.splitName}>
-                                  {isCurrentUser ? 'You' : getUserName(split.user_id)}
+                                  {isCurrentUser ? 'You' : getUserName(split.user_id, splitUserName)}
                                   {splitPayer && ' (paid)'}
                                 </Text>
                                 <Text style={styles.splitAmount}>
@@ -290,6 +366,18 @@ export default function RoomDetailsScreen() {
           )}
         </ScrollView>
       </View>
+
+      {/* Settlement Modal */}
+      {room && (
+        <SettlementModal
+          visible={showSettlementModal}
+          onClose={() => setShowSettlementModal(false)}
+          onSubmit={handleSubmitSettlement}
+          recipientName={getRoomCreatorName()}
+          maxAmount={Math.abs(balance)}
+          roomName={room.name}
+        />
+      )}
     </>
   );
 }
@@ -332,6 +420,36 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
   },
+  membersCard: {
+    padding: spacing.lg,
+  },
+  membersTitle: {
+    ...typography.body,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: spacing.md,
+  },
+  membersList: {
+    gap: spacing.md,
+  },
+  memberItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  memberInfo: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  memberName: {
+    ...typography.body,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  memberRole: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
   balanceCard: {
     padding: spacing.lg,
     alignItems: 'center',
@@ -355,6 +473,10 @@ const styles = StyleSheet.create({
     ...typography.bodySmall,
     color: colors.textSecondary,
     textAlign: 'center',
+  },
+  settleUpButton: {
+    marginTop: spacing.md,
+    width: '100%',
   },
   sectionTitle: {
     ...typography.h3,

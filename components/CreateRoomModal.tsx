@@ -37,6 +37,7 @@ export default function CreateRoomModal({
   const [amount, setAmount] = useState<string>("");
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
   const [step, setStep] = useState<number>(1);
+  const [searchQuery, setSearchQuery] = useState<string>("");
 
   const handleToggleUser = (user: User) => {
     if (selectedUsers.find((u) => u.id === user.id)) {
@@ -45,6 +46,11 @@ export default function CreateRoomModal({
       setSelectedUsers([...selectedUsers, user]);
     }
   };
+
+  // Filter users based on search query
+  const filteredUsers = availableUsers.filter((user) =>
+    user.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const handleCreate = () => {
     if (!name || !amount || !currentUser) return;
@@ -167,9 +173,27 @@ export default function CreateRoomModal({
                 </Text>
 
                 <Text style={styles.label}>Selected: {selectedUsers.length}</Text>
-                
-                <FlatList
-                  data={availableUsers}
+
+                {availableUsers.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <UserPlus size={48} color={colors.gray} />
+                    <Text style={styles.emptyStateTitle}>No Matches Yet</Text>
+                    <Text style={styles.emptyStateText}>
+                      Match with potential roommates first to add them to expense rooms
+                    </Text>
+                  </View>
+                ) : (
+                  <>
+                    <TextInput
+                      style={styles.searchInput}
+                      placeholder="Search friends..."
+                      placeholderTextColor={colors.gray}
+                      value={searchQuery}
+                      onChangeText={setSearchQuery}
+                      testID="room-search-input"
+                    />
+                    <FlatList
+                      data={filteredUsers}
                   keyExtractor={(item) => item.id}
                   renderItem={({ item }) => {
                     const isSelected = !!selectedUsers.find((u) => u.id === item.id);
@@ -197,6 +221,8 @@ export default function CreateRoomModal({
                   }}
                   style={styles.userList}
                 />
+                  </>
+                )}
 
                 <View style={styles.buttonRow}>
                   <Button
@@ -274,6 +300,16 @@ const styles = StyleSheet.create({
     height: 80,
     textAlignVertical: "top",
   },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    padding: spacing.sm,
+    ...typography.body,
+    color: colors.textPrimary,
+    backgroundColor: colors.card,
+    marginBottom: spacing.sm,
+  },
   infoText: {
     ...typography.bodySmall,
     color: colors.textSecondary,
@@ -325,5 +361,24 @@ const styles = StyleSheet.create({
   },
   halfButton: {
     flex: 1,
+  },
+  emptyState: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.background,
+    borderRadius: 12,
+    marginVertical: spacing.md,
+  },
+  emptyStateTitle: {
+    ...typography.body,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  emptyStateText: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    textAlign: 'center',
   },
 });

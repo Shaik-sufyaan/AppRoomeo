@@ -55,6 +55,11 @@ export interface ExpenseSplit {
   amount: number;
   paid: boolean;
   paid_at?: string;
+  user?: {
+    id: string;
+    name: string;
+    photos: string[];
+  };
 }
 
 // =====================================================
@@ -261,6 +266,11 @@ export interface ExpenseRoom {
     user_id: string;
     role: 'admin' | 'member';
     joined_at: string;
+    user?: {
+      id: string;
+      name: string;
+      photos: string[];
+    };
   }[];
 }
 
@@ -277,7 +287,37 @@ export interface ExpenseEvent {
     user_id: string;
     role: 'admin' | 'member';
     joined_at: string;
+    user?: {
+      id: string;
+      name: string;
+      photos: string[];
+    };
   }[];
+}
+
+export type PaymentMethod = 'cash' | 'zelle' | 'venmo' | 'paypal' | 'bank_transfer' | 'other';
+export type SettlementStatus = 'pending' | 'approved' | 'rejected';
+
+export interface Settlement {
+  id: string;
+  room_id: string;
+  from_user_id: string;
+  to_user_id: string;
+  amount: number;
+  payment_method?: PaymentMethod;
+  proof_image?: string;
+  note?: string;
+  status: SettlementStatus;
+  settlement_date: string;
+  created_at: string;
+  approved_at?: string;
+  approved_by?: string;
+}
+
+export interface PendingSettlement extends Settlement {
+  room_name: string;
+  from_user_name: string;
+  from_user_photos: string[];
 }
 
 /**
@@ -373,7 +413,10 @@ export async function getExpenseRooms(): Promise<{
       .from('expense_rooms')
       .select(`
         *,
-        members:expense_room_members(*)
+        members:expense_room_members(
+          *,
+          user:profiles(id, name, photos)
+        )
       `)
       .in('id',
         supabase
@@ -419,7 +462,10 @@ export async function getRoomDetails(roomId: string): Promise<{
       .from('expense_rooms')
       .select(`
         *,
-        members:expense_room_members(*)
+        members:expense_room_members(
+          *,
+          user:profiles(id, name, photos)
+        )
       `)
       .eq('id', roomId)
       .single();
@@ -433,10 +479,13 @@ export async function getRoomDetails(roomId: string): Promise<{
       .from('expenses')
       .select(`
         *,
-        splits:expense_splits(*)
+        splits:expense_splits(
+          *,
+          user:profiles(id, name, photos)
+        )
       `)
       .eq('room_id', roomId)
-      .order('expense_date', { ascending: false });
+      .order('expense_date', { ascending: false});
 
     if (expensesError) {
       return { success: false, error: expensesError.message };
@@ -561,7 +610,10 @@ export async function getExpenseEvents(): Promise<{
       .from('expense_events')
       .select(`
         *,
-        members:expense_event_members(*)
+        members:expense_event_members(
+          *,
+          user:profiles(id, name, photos)
+        )
       `)
       .in('id',
         supabase
@@ -607,7 +659,10 @@ export async function getEventDetails(eventId: string): Promise<{
       .from('expense_events')
       .select(`
         *,
-        members:expense_event_members(*)
+        members:expense_event_members(
+          *,
+          user:profiles(id, name, photos)
+        )
       `)
       .eq('id', eventId)
       .single();
@@ -621,10 +676,13 @@ export async function getEventDetails(eventId: string): Promise<{
       .from('expenses')
       .select(`
         *,
-        splits:expense_splits(*)
+        splits:expense_splits(
+          *,
+          user:profiles(id, name, photos)
+        )
       `)
       .eq('event_id', eventId)
-      .order('expense_date', { ascending: false });
+      .order('expense_date', { ascending: false});
 
     if (expensesError) {
       return { success: false, error: expensesError.message };
@@ -738,7 +796,10 @@ export async function getExpenses(): Promise<{
       .from('expenses')
       .select(`
         *,
-        splits:expense_splits(*)
+        splits:expense_splits(
+          *,
+          user:profiles(id, name, photos)
+        )
       `)
       .order('expense_date', { ascending: false });
 
@@ -811,6 +872,126 @@ export async function markSplitAsPaid(
     }
 
     return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+// =====================================================
+// Settlement Functions
+// =====================================================
+
+/**
+ * Submit a settlement payment
+ */
+export async function submitSettlement(
+  roomId: string,
+  toUserId: string,
+  amount: number,
+  paymentMethod: PaymentMethod,
+  proofImage?: string,
+  note?: string
+): Promise<{
+  success: boolean;
+  data?: { settlementId: string };
+  error?: string;
+}> {
+  try {
+    const { data: settlementId, error } = await supabase.rpc('submit_settlement', {
+      p_room_id: roomId,
+      p_to_user_id: toUserId,
+      p_amount: amount,
+      p_payment_method: paymentMethod,
+      p_proof_image: proofImage,
+      p_note: note,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return {
+      success: true,
+      data: { settlementId },
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Approve or reject a settlement
+ */
+export async function approveSettlement(
+  settlementId: string,
+  approved: boolean
+): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const { error } = await supabase.rpc('approve_settlement', {
+      p_settlement_id: settlementId,
+      p_approved: approved,
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get pending settlements for current user (as recipient)
+ */
+export async function getPendingSettlements(): Promise<{
+  success: boolean;
+  data?: PendingSettlement[];
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase.rpc('get_pending_settlements_for_user');
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return {
+      success: true,
+      data: data as PendingSettlement[],
+    };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get settlements for a room
+ */
+export async function getRoomSettlements(roomId: string): Promise<{
+  success: boolean;
+  data?: Settlement[];
+  error?: string;
+}> {
+  try {
+    const { data, error } = await supabase
+      .from('settlements')
+      .select('*')
+      .eq('room_id', roomId)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return {
+      success: true,
+      data: data as Settlement[],
+    };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
