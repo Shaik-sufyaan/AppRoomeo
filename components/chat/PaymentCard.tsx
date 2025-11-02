@@ -7,23 +7,27 @@ import {
   Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SplitRequest } from '@/types';
+import { SplitRequestDetail } from '@/lib/api/expenses';
 import { chatColors, chatTypography, chatBorderRadius, chatSpacing } from '@/constants/chatColors';
 
 interface PaymentCardProps {
-  splitRequest: SplitRequest;
+  splitRequest: SplitRequestDetail;
   onAccept: () => void;
   onDecline: () => void;
+  onSettleUp?: () => void;
   isCreator: boolean; // Whether current user created this split
+  isSettled?: boolean; // Whether the expense split has been paid
 }
 
 export default function PaymentCard({
   splitRequest,
   onAccept,
   onDecline,
+  onSettleUp,
   isCreator,
+  isSettled = false,
 }: PaymentCardProps) {
-  const { itemName, itemEmoji, totalAmount, splits, status } = splitRequest;
+  const { item_name: itemName, item_emoji: itemEmoji, total_amount: totalAmount, splits, status } = splitRequest;
 
   // Function to get user initials
   const getInitials = (name: string): string => {
@@ -37,7 +41,13 @@ export default function PaymentCard({
 
   // Render status badge for completed requests
   const renderStatusBadge = () => {
-    if (status === 'accepted') {
+    if (isSettled && status === 'accepted') {
+      return (
+        <View style={[styles.statusBadge, styles.settledBadge]}>
+          <Text style={styles.statusBadgeText}>✅ Settled</Text>
+        </View>
+      );
+    } else if (status === 'accepted') {
       return (
         <View style={[styles.statusBadge, styles.acceptedBadge]}>
           <Text style={styles.statusBadgeText}>✓ Accepted</Text>
@@ -81,10 +91,10 @@ export default function PaymentCard({
             <View style={styles.splitUser}>
               <View style={styles.splitAvatar}>
                 <Text style={styles.splitInitials}>
-                  {split.userInitials || getInitials(split.userName)}
+                  {getInitials(split.user_name)}
                 </Text>
               </View>
-              <Text style={styles.splitUserName}>{split.userName}</Text>
+              <Text style={styles.splitUserName}>{split.user_name}</Text>
             </View>
             <Text style={styles.splitAmount}>${split.amount.toFixed(2)}</Text>
           </View>
@@ -125,6 +135,24 @@ export default function PaymentCard({
           <Text style={styles.statusBadgeText}>⏳ Waiting for response</Text>
         </View>
       )}
+
+      {/* Settle Up Button for accepted splits - shown to creator who can mark when they received payment */}
+      {status === 'accepted' && isCreator && !isSettled && onSettleUp && (
+        <TouchableOpacity
+          style={styles.settleUpButton}
+          onPress={onSettleUp}
+          activeOpacity={0.8}
+        >
+          <LinearGradient
+            colors={[chatColors.accentGreen, chatColors.successGreen]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.gradientButton}
+          >
+            <Text style={styles.primaryButtonText}>💰 Settle Up</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -134,7 +162,8 @@ const styles = StyleSheet.create({
     backgroundColor: chatColors.overlayMedium,
     borderRadius: chatBorderRadius.large,
     padding: chatSpacing.lg,
-    maxWidth: '85%',
+    minWidth: '85%',
+    maxWidth: '90%',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -265,6 +294,11 @@ const styles = StyleSheet.create({
     fontWeight: chatTypography.buttonText.fontWeight,
     color: chatColors.secondaryText,
   },
+  settleUpButton: {
+    borderRadius: chatBorderRadius.medium,
+    overflow: 'hidden',
+    marginTop: chatSpacing.sm,
+  },
 
   // Status badge
   statusBadge: {
@@ -282,6 +316,9 @@ const styles = StyleSheet.create({
   },
   pendingBadge: {
     backgroundColor: 'rgba(245, 158, 11, 0.2)',
+  },
+  settledBadge: {
+    backgroundColor: 'rgba(34, 197, 94, 0.2)',
   },
   statusBadgeText: {
     fontSize: chatTypography.buttonText.fontSize,

@@ -32,6 +32,13 @@ import {
   unsubscribe,
   MessageWithSender,
 } from "@/lib/api/chat";
+import {
+  createSplitRequest,
+  getSplitRequestByMessageId,
+  acceptSplitRequest,
+  declineSplitRequest,
+  SplitRequestDetail,
+} from "@/lib/api/expenses";
 import { supabase } from "@/lib/supabase";
 import { RealtimeChannel } from "@supabase/supabase-js";
 
@@ -49,6 +56,8 @@ export default function ChatThreadScreen() {
   const messageIdsRef = useRef<Set<string>>(new Set());
   const [showSplitModal, setShowSplitModal] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const [splitRequests, setSplitRequests] = useState<Map<string, SplitRequestDetail>>(new Map());
+  const [settledSplits, setSettledSplits] = useState<Set<string>>(new Set()); // Track which split requests are settled
 
   // Load conversation details and messages
   useEffect(() => {
@@ -132,6 +141,9 @@ export default function ChatThreadScreen() {
 
         setMessages(messagesWithIsMe);
 
+        // Load split requests for messages
+        await loadSplitRequests(messagesWithIsMe);
+
         // Scroll to bottom
         setTimeout(() => {
           flatListRef.current?.scrollToEnd({ animated: false });
@@ -148,6 +160,40 @@ export default function ChatThreadScreen() {
       alert(`Error loading chat: ${error}`);
       setIsLoading(false);
     }
+  };
+
+  const loadSplitRequests = async (msgs: MessageWithSender[]) => {
+    const newSplitRequests = new Map<string, SplitRequestDetail>();
+    const newSettledSplits = new Set<string>();
+
+    // Find all messages that might have split requests
+    for (const msg of msgs) {
+      if (msg.text.includes('💰 Split request:')) {
+        const result = await getSplitRequestByMessageId(msg.id);
+        if (result.success && result.data) {
+          newSplitRequests.set(msg.id, result.data);
+
+          // Check if this split is settled (only for accepted splits)
+          if (result.data.status === 'accepted') {
+            const { getExpenseBySplitRequest } = await import('@/lib/api/expenses');
+            const expenseResult = await getExpenseBySplitRequest(result.data.id);
+
+            if (expenseResult.success && expenseResult.data) {
+              const expense = expenseResult.data;
+              const userSplit = expense.splits.find((s) => s.user_id === user?.id);
+
+              // If user's split is paid, mark this split request as settled
+              if (userSplit && userSplit.paid) {
+                newSettledSplits.add(msg.id);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    setSplitRequests(newSplitRequests);
+    setSettledSplits(newSettledSplits);
   };
 
   const handleNewMessage = async (newMessage: any) => {
@@ -184,6 +230,14 @@ export default function ChatThreadScreen() {
     messageIdsRef.current.add(newMessage.id);
 
     setMessages(prev => [...prev, messageWithSender]);
+
+    // If it's a split request message, load the split request data
+    if (newMessage.text.includes('💰 Split request:')) {
+      const result = await getSplitRequestByMessageId(newMessage.id);
+      if (result.success && result.data) {
+        setSplitRequests((prev) => new Map(prev).set(newMessage.id, result.data!));
+      }
+    }
 
     // Scroll to bottom
     setTimeout(() => {
@@ -224,6 +278,132 @@ export default function ChatThreadScreen() {
       alert('Failed to send message');
     } finally {
       setIsSending(false);
+    }
+  };
+
+  const handleCreateSplitRequest = async (splitRequest: {
+    itemName: string;
+    itemEmoji: string;
+    totalAmount: number;
+    splits: { userId: string; userName: string; amount: number }[];
+  }) => {
+    try {
+      const result = await createSplitRequest(chatId, splitRequest);
+
+      if (result.success) {
+        setShowSplitModal(false);
+        // Message will appear via real-time subscription
+      } else {
+        alert(result.error || 'Failed to create split request');
+      }
+    } catch (error) {
+      console.error('Exception in handleCreateSplitRequest:', error);
+      alert('Failed to create split request');
+    }
+  };
+
+  const handleAcceptSplit = async (splitRequestId: string) => {
+    try {
+      const result = await acceptSplitRequest(splitRequestId);
+
+      if (result.success) {
+        // Find the message ID for this split request
+        const messageId = Array.from(splitRequests.entries()).find(
+          ([_, sr]) => sr.id === splitRequestId
+        )?.[0];
+
+        if (messageId) {
+          // Reload the split request to get updated status
+          const updated = await getSplitRequestByMessageId(messageId);
+          if (updated.success && updated.data) {
+            setSplitRequests((prev) => new Map(prev).set(messageId, updated.data!));
+          }
+        }
+      } else {
+        alert(result.error || 'Failed to accept split request');
+      }
+    } catch (error) {
+      console.error('Exception in handleAcceptSplit:', error);
+      alert('Failed to accept split request');
+    }
+  };
+
+  const handleDeclineSplit = async (splitRequestId: string) => {
+    try {
+      const result = await declineSplitRequest(splitRequestId);
+
+      if (result.success) {
+        // Find the message ID for this split request
+        const messageId = Array.from(splitRequests.entries()).find(
+          ([_, sr]) => sr.id === splitRequestId
+        )?.[0];
+
+        if (messageId) {
+          // Reload the split request to get updated status
+          const updated = await getSplitRequestByMessageId(messageId);
+          if (updated.success && updated.data) {
+            setSplitRequests((prev) => new Map(prev).set(messageId, updated.data!));
+          }
+        }
+      } else {
+        alert(result.error || 'Failed to decline split request');
+      }
+    } catch (error) {
+      console.error('Exception in handleDeclineSplit:', error);
+      alert('Failed to decline split request');
+    }
+  };
+
+  const handleSettleUp = async (splitRequestId: string) => {
+    try {
+      // Import the function we'll create
+      const { getExpenseBySplitRequest, markSplitAsPaid } = await import('@/lib/api/expenses');
+
+      // Get the expense for this split request
+      const expenseResult = await getExpenseBySplitRequest(splitRequestId);
+
+      if (!expenseResult.success || !expenseResult.data) {
+        alert('Could not find expense for this split request');
+        return;
+      }
+
+      const expense = expenseResult.data;
+
+      // Find the split of the person who OWES money (not the creator/payer)
+      // The creator is marking that the other person paid them back
+      const otherUserSplit = expense.splits.find(
+        (s) => s.user_id !== expense.paid_by
+      );
+
+      if (!otherUserSplit) {
+        alert('Could not find the other user\'s split in this expense');
+        return;
+      }
+
+      // Mark the other user's split as paid
+      const result = await markSplitAsPaid(otherUserSplit.id);
+
+      if (result.success) {
+        alert('✅ Payment marked as settled!');
+
+        // Update settled splits state to show "Settled" badge
+        setSettledSplits((prev) => {
+          const newSet = new Set(prev);
+          // Find the message ID for this split request
+          const messageId = Array.from(splitRequests.entries()).find(
+            ([_, sr]) => sr.id === splitRequestId
+          )?.[0];
+          if (messageId) {
+            newSet.add(messageId);
+          }
+          return newSet;
+        });
+      } else {
+        alert(result.error || 'Failed to settle payment');
+      }
+    } catch (error) {
+      console.error('Exception in handleSettleUp:', error);
+      alert('Failed to settle payment');
     }
   };
 
@@ -323,45 +503,77 @@ export default function ChatThreadScreen() {
             data={messages}
             contentContainerStyle={styles.messageList}
             keyExtractor={(item) => item.id}
-            renderItem={({ item, index }) => (
-              <View>
-                {shouldShowDateDivider(index) && (
-                  <DateDivider date={item.created_at} />
-                )}
-                <View
-                  style={[
-                    styles.messageBubble,
-                    item.isMe ? styles.myMessage : styles.theirMessage,
-                  ]}
-                >
-                  {!item.isMe && otherUser.photos?.[0] && (
-                    <Avatar
-                      uri={otherUser.photos?.[0]}
-                      size="small"
-                      style={styles.avatar}
-                    />
+            renderItem={({ item, index }) => {
+              const splitRequest = splitRequests.get(item.id);
+              const isSplitMessage = item.text.includes('💰 Split request:');
+
+              return (
+                <View>
+                  {shouldShowDateDivider(index) && (
+                    <DateDivider date={item.created_at} />
                   )}
-                  {item.isMe ? (
-                    <LinearGradient
-                      colors={[chatColors.accentGreen, chatColors.successGreen]}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 1 }}
-                      style={[styles.bubble, styles.myBubble]}
-                    >
-                      <Text style={[styles.messageText, styles.myMessageText]}>
-                        {item.text}
-                      </Text>
-                    </LinearGradient>
+                  {isSplitMessage ? (
+                    // Render PaymentCard for split request messages
+                    <View style={[
+                      styles.paymentCardContainer,
+                      item.isMe ? styles.myMessage : styles.theirMessage
+                    ]}>
+                      {splitRequest ? (
+                        <PaymentCard
+                          splitRequest={splitRequest}
+                          onAccept={() => handleAcceptSplit(splitRequest.id)}
+                          onDecline={() => handleDeclineSplit(splitRequest.id)}
+                          onSettleUp={() => handleSettleUp(splitRequest.id)}
+                          isCreator={splitRequest.created_by === user?.id}
+                          isSettled={settledSplits.has(item.id)}
+                        />
+                      ) : (
+                        <View style={[styles.bubble, styles.theirBubble, styles.loadingBubble]}>
+                          <ActivityIndicator size="small" color={chatColors.primary} />
+                          <Text style={[styles.messageText, styles.theirMessageText]}>
+                            Loading split request...
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                   ) : (
-                    <View style={[styles.bubble, styles.theirBubble]}>
-                      <Text style={[styles.messageText, styles.theirMessageText]}>
-                        {item.text}
-                      </Text>
+                    // Render normal message
+                    <View
+                      style={[
+                        styles.messageBubble,
+                        item.isMe ? styles.myMessage : styles.theirMessage,
+                      ]}
+                    >
+                      {!item.isMe && otherUser.photos?.[0] && (
+                        <Avatar
+                          uri={otherUser.photos?.[0]}
+                          size="small"
+                          style={styles.avatar}
+                        />
+                      )}
+                      {item.isMe ? (
+                        <LinearGradient
+                          colors={[chatColors.accentGreen, chatColors.successGreen]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={[styles.bubble, styles.myBubble]}
+                        >
+                          <Text style={[styles.messageText, styles.myMessageText]}>
+                            {item.text}
+                          </Text>
+                        </LinearGradient>
+                      ) : (
+                        <View style={[styles.bubble, styles.theirBubble]}>
+                          <Text style={[styles.messageText, styles.theirMessageText]}>
+                            {item.text}
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   )}
                 </View>
-              </View>
-            )}
+              );
+            }}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>No messages yet</Text>
@@ -426,10 +638,7 @@ export default function ChatThreadScreen() {
         <CreateSplitModal
           visible={showSplitModal}
           onClose={() => setShowSplitModal(false)}
-          onSubmit={(splitRequest) => {
-            // TODO: Implement split request API call
-            setShowSplitModal(false);
-          }}
+          onSubmit={handleCreateSplitRequest}
           participants={[
             { id: user?.id || '', name: 'You' },
             { id: otherUser.id, name: otherUser.name }
@@ -494,6 +703,12 @@ const styles = StyleSheet.create({
   theirBubble: {
     backgroundColor: chatColors.receivedBubble,
     borderBottomLeftRadius: chatBorderRadius.small,
+  },
+  loadingBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: chatSpacing.sm,
+    paddingVertical: chatSpacing.md + 4,
   },
   messageText: {
     fontSize: chatTypography.messageText.fontSize,
@@ -571,6 +786,12 @@ const styles = StyleSheet.create({
     color: '#ef4444',
     textAlign: "center",
     marginTop: chatSpacing.xl,
+  },
+  paymentCardContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: chatSpacing.md,
+    marginVertical: chatSpacing.sm,
   },
 });
 
