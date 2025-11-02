@@ -180,10 +180,15 @@ export default function ChatThreadScreen() {
 
             if (expenseResult.success && expenseResult.data) {
               const expense = expenseResult.data;
-              const userSplit = expense.splits.find((s) => s.user_id === user?.id);
 
-              // If user's split is paid, mark this split request as settled
-              if (userSplit && userSplit.paid) {
+              // Check if the other user's split is paid (the person who owes money)
+              // This determines if the creator sees "Settled" badge
+              const otherUserSplit = expense.splits.find(
+                (s) => s.user_id !== expense.paid_by
+              );
+
+              // If other user's split is paid, mark this split request as settled
+              if (otherUserSplit && otherUserSplit.paid) {
                 newSettledSplits.add(msg.id);
               }
             }
