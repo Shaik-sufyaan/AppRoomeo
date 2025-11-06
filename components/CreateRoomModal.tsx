@@ -8,6 +8,8 @@ import {
   TextInput,
   ScrollView,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { X, UserPlus, Check } from "lucide-react-native";
 import colors from "@/constants/colors";
@@ -23,6 +25,9 @@ interface CreateRoomModalProps {
   onCreateRoom: (room: ExpenseRoom) => void;
   currentUser: User | null;
   availableUsers: User[];
+  eventId?: string;
+  eventName?: string;
+  eventMembers?: User[];
 }
 
 export default function CreateRoomModal({
@@ -31,6 +36,9 @@ export default function CreateRoomModal({
   onCreateRoom,
   currentUser,
   availableUsers,
+  eventId,
+  eventName,
+  eventMembers,
 }: CreateRoomModalProps) {
   const [name, setName] = useState<string>("");
   const [description, setDescription] = useState<string>("");
@@ -38,6 +46,22 @@ export default function CreateRoomModal({
   const [selectedUsers, setSelectedUsers] = useState<User[]>([]);
   const [step, setStep] = useState<number>(1);
   const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Auto-select event members when eventId is provided
+  React.useEffect(() => {
+    if (eventId && eventMembers && eventMembers.length > 0) {
+      // Filter out the current user from event members
+      const membersToSelect = eventMembers.filter(
+        (member) => member.id !== currentUser?.id
+      );
+      setSelectedUsers(membersToSelect);
+
+      // Pre-fill name if event name is provided
+      if (eventName && !name) {
+        setName(`${eventName} - Room`);
+      }
+    }
+  }, [eventId, eventMembers, eventName, currentUser?.id]);
 
   const handleToggleUser = (user: User) => {
     if (selectedUsers.find((u) => u.id === user.id)) {
@@ -111,18 +135,37 @@ export default function CreateRoomModal({
       animationType="slide"
       onRequestClose={handleClose}
     >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              {step === 1 ? "Create Room" : "Add People"}
-            </Text>
-            <TouchableOpacity onPress={handleClose} testID="close-create-room-modal">
-              <X size={24} color={colors.primary} />
-            </TouchableOpacity>
-          </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={styles.modalOverlay}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlayTouchable}
+          activeOpacity={1}
+          onPress={handleClose}
+        >
+          <TouchableOpacity
+            style={styles.modalContent}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalHeader}>
+              <View style={styles.modalTitleContainer}>
+                <Text style={styles.modalTitle}>
+                  {step === 1 ? "Create Room" : "Add People"}
+                </Text>
+                {eventId && eventName && (
+                  <View style={styles.eventBadge}>
+                    <Text style={styles.eventBadgeText}>For: {eventName}</Text>
+                  </View>
+                )}
+              </View>
+              <TouchableOpacity onPress={handleClose} testID="close-create-room-modal">
+                <X size={24} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
 
-          <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
             {step === 1 ? (
               <View style={styles.formContainer}>
                 <Text style={styles.label}>Room Name *</Text>
@@ -177,9 +220,9 @@ export default function CreateRoomModal({
                 {availableUsers.length === 0 ? (
                   <View style={styles.emptyState}>
                     <UserPlus size={48} color={colors.gray} />
-                    <Text style={styles.emptyStateTitle}>No Matches Yet</Text>
+                    <Text style={styles.emptyStateTitle}>No Expense Friends Yet</Text>
                     <Text style={styles.emptyStateText}>
-                      Match with potential roommates first to add them to expense rooms
+                      Add expense friends first to create rooms with them
                     </Text>
                   </View>
                 ) : (
@@ -243,15 +286,20 @@ export default function CreateRoomModal({
                 </View>
               </View>
             )}
-          </ScrollView>
-        </View>
-      </View>
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
   modalOverlay: {
+    flex: 1,
+    justifyContent: "flex-end",
+  },
+  modalOverlayTouchable: {
     flex: 1,
     backgroundColor: colors.overlay,
     justifyContent: "flex-end",
@@ -271,10 +319,26 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  modalTitleContainer: {
+    flex: 1,
+    gap: spacing.xs,
+  },
   modalTitle: {
     ...typography.h2,
     color: colors.primary,
     fontWeight: "600",
+  },
+  eventBadge: {
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+  },
+  eventBadgeText: {
+    ...typography.caption,
+    color: colors.white,
+    fontWeight: '600',
   },
   modalBody: {
     padding: spacing.lg,

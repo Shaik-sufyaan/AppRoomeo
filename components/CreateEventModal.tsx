@@ -168,9 +168,9 @@ export default function CreateEventModal({
                 {availableUsers.length === 0 ? (
                   <View style={styles.emptyState}>
                     <Users size={48} color={colors.gray} />
-                    <Text style={styles.emptyStateTitle}>No Matches Yet</Text>
+                    <Text style={styles.emptyStateTitle}>No Expense Friends Yet</Text>
                     <Text style={styles.emptyStateText}>
-                      Match with potential roommates first to add them to expense events
+                      Add expense friends first to create events with them
                     </Text>
                   </View>
                 ) : (

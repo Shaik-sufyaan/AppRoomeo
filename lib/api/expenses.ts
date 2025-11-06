@@ -258,6 +258,7 @@ export interface ExpenseRoom {
   id: string;
   name: string;
   description?: string;
+  event_id?: string;
   created_by: string;
   created_at: string;
   updated_at: string;
@@ -322,11 +323,13 @@ export interface PendingSettlement extends Settlement {
 
 /**
  * Create an expense room
+ * Uses database function to handle creation with proper permissions
  */
 export async function createExpenseRoom(
   name: string,
   description: string,
-  memberIds: string[]
+  memberIds: string[],
+  eventId?: string
 ): Promise<{
   success: boolean;
   data?: { roomId: string };
@@ -338,58 +341,32 @@ export async function createExpenseRoom(
       return { success: false, error: 'Not authenticated' };
     }
 
-    // Create the room
-    const { data: room, error: roomError } = await supabase
-      .from('expense_rooms')
-      .insert({
-        name,
-        description,
-        created_by: user.id,
-      })
-      .select()
-      .single();
+    console.log('Calling create_expense_room_with_members RPC function');
 
-    if (roomError || !room) {
-      return { success: false, error: roomError?.message || 'Failed to create room' };
-    }
-
-    // Add creator as admin
-    const { error: creatorError } = await supabase
-      .from('expense_room_members')
-      .insert({
-        room_id: room.id,
-        user_id: user.id,
-        role: 'admin',
-      });
-
-    if (creatorError) {
-      // Rollback room creation
-      await supabase.from('expense_rooms').delete().eq('id', room.id);
-      return { success: false, error: creatorError.message };
-    }
-
-    // Add other members
-    if (memberIds.length > 0) {
-      const members = memberIds.map((memberId) => ({
-        room_id: room.id,
-        user_id: memberId,
-        role: 'member' as const,
-      }));
-
-      const { error: membersError } = await supabase
-        .from('expense_room_members')
-        .insert(members);
-
-      if (membersError) {
-        return { success: false, error: membersError.message };
+    // Call the database function to create the room
+    const { data: roomId, error: rpcError } = await supabase.rpc(
+      'create_expense_room_with_members',
+      {
+        p_room_name: name,
+        p_description: description || '',
+        p_member_ids: memberIds,
+        p_event_id: eventId || null,
       }
+    );
+
+    if (rpcError) {
+      console.error('RPC error:', rpcError);
+      return { success: false, error: rpcError.message };
     }
+
+    console.log('Room created successfully with ID:', roomId);
 
     return {
       success: true,
-      data: { roomId: room.id },
+      data: { roomId: roomId as string },
     };
   } catch (error: any) {
+    console.error('Exception in createExpenseRoom:', error);
     return { success: false, error: error.message };
   }
 }

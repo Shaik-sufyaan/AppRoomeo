@@ -13,6 +13,9 @@ import { Stack, useRouter } from "expo-router";
 import NotificationBell from "@/components/NotificationBell";
 import CreateRoomModal from "@/components/CreateRoomModal";
 import CreateEventModal from "@/components/CreateEventModal";
+import AddExpenseFriendModal from "@/components/AddExpenseFriendModal";
+import ExpenseFriendRequestsModal from "@/components/ExpenseFriendRequestsModal";
+import ExpenseFriendsListModal from "@/components/ExpenseFriendsListModal";
 import {
   TrendingUp,
   TrendingDown,
@@ -50,7 +53,13 @@ import {
   ExpenseEvent,
   PendingSettlement,
 } from "@/lib/api/expenses";
-import { getMatches, MatchWithProfile } from "@/lib/api/matches";
+import {
+  getExpenseFriends,
+  getPendingExpenseFriendRequests,
+  subscribeToExpenseFriendRequests,
+  subscribeToExpenseFriends,
+  ExpenseFriend,
+} from "@/lib/api/expenseFriends";
 import { User } from "@/types";
 
 type TabType = "all" | "rooms" | "events";
@@ -69,8 +78,13 @@ export default function ExpensesScreen() {
   const [expandedExpense, setExpandedExpense] = useState<string | null>(null);
   const [showCreateRoomModal, setShowCreateRoomModal] = useState(false);
   const [showCreateEventModal, setShowCreateEventModal] = useState(false);
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [showFriendRequestsModal, setShowFriendRequestsModal] = useState(false);
+  const [showFriendsListModal, setShowFriendsListModal] = useState(false);
   const [currentUserProfile, setCurrentUserProfile] = useState<User | null>(null);
   const [availableUsers, setAvailableUsers] = useState<User[]>([]);
+  const [expenseFriends, setExpenseFriends] = useState<ExpenseFriend[]>([]);
+  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
   const [expandedToReceive, setExpandedToReceive] = useState(false);
   const [expandedYouOwe, setExpandedYouOwe] = useState(false);
 
@@ -81,6 +95,29 @@ export default function ExpensesScreen() {
     }
   }, [user]);
 
+  // Set up real-time subscriptions for friend requests
+  useEffect(() => {
+    if (!user) return;
+
+    // Subscribe to friend requests
+    const requestsChannel = subscribeToExpenseFriendRequests(async () => {
+      // Reload pending requests when there's an update
+      await loadPendingRequests();
+    });
+
+    // Subscribe to expense friends
+    const friendsChannel = subscribeToExpenseFriends(async () => {
+      // Reload friends list when there's an update
+      await loadExpenseFriends();
+    });
+
+    // Cleanup subscriptions on unmount
+    return () => {
+      requestsChannel.unsubscribe();
+      friendsChannel.unsubscribe();
+    };
+  }, [user]);
+
   const loadAllData = async () => {
     try {
       await Promise.all([
@@ -88,7 +125,8 @@ export default function ExpensesScreen() {
         loadRooms(),
         loadEvents(),
         loadPendingSettlements(),
-        loadMatches(),
+        loadExpenseFriends(),
+        loadPendingRequests(),
         loadCurrentUser()
       ]);
     } catch (error) {
@@ -127,26 +165,35 @@ export default function ExpensesScreen() {
     }
   };
 
-  const loadMatches = async () => {
-    const result = await getMatches();
+  const loadExpenseFriends = async () => {
+    const result = await getExpenseFriends();
     if (result.success && result.data) {
-      // Transform matches to User[] format
-      const users: User[] = result.data.map((match: MatchWithProfile) => ({
-        id: match.matched_user.id,
-        name: match.matched_user.name,
-        age: match.matched_user.age,
-        userType: match.matched_user.user_type,
-        college: match.matched_user.college,
-        workStatus: match.matched_user.work_status,
-        smoker: match.matched_user.smoker,
-        pets: match.matched_user.pets,
-        hasPlace: match.matched_user.has_place,
-        about: match.matched_user.about,
-        photos: match.matched_user.photos || [],
-        roomPhotos: match.matched_user.room_photos,
-        distance: match.matched_user.distance,
+      setExpenseFriends(result.data);
+
+      // Transform expense friends to User[] format for modals
+      const users: User[] = result.data.map((friend: ExpenseFriend) => ({
+        id: friend.friend_id,
+        name: friend.friend_name,
+        age: friend.friend_age,
+        userType: undefined,
+        college: undefined,
+        workStatus: 'not-working' as const,
+        smoker: false,
+        pets: false,
+        hasPlace: false,
+        about: undefined,
+        photos: friend.friend_photos || [],
+        roomPhotos: undefined,
+        distance: undefined,
       }));
       setAvailableUsers(users);
+    }
+  };
+
+  const loadPendingRequests = async () => {
+    const result = await getPendingExpenseFriendRequests();
+    if (result.success && result.data) {
+      setPendingRequestsCount(result.data.length);
     }
   };
 
@@ -235,10 +282,18 @@ export default function ExpensesScreen() {
 
   const handleCreateRoom = async (roomData: any) => {
     try {
+      console.log('handleCreateRoom called with:', roomData);
+
       // Extract member IDs from the room data
       const memberIds = roomData.members
         .filter((m: any) => m.id !== user?.id)
         .map((m: any) => m.id);
+
+      console.log('Calling createExpenseRoom with:', {
+        name: roomData.name,
+        description: roomData.description || '',
+        memberIds,
+      });
 
       const result = await createExpenseRoom(
         roomData.name,
@@ -246,11 +301,16 @@ export default function ExpensesScreen() {
         memberIds
       );
 
+      console.log('createExpenseRoom result:', result);
+
       if (result.success) {
+        console.log('Room created successfully, ID:', result.data?.roomId);
         setShowCreateRoomModal(false);
         await loadRooms();
         setActiveTab('rooms');
+        alert('Room created successfully!');
       } else {
+        console.error('Failed to create room:', result.error);
         alert(result.error || 'Failed to create room');
       }
     } catch (error: any) {
@@ -289,6 +349,14 @@ export default function ExpensesScreen() {
       console.error('Error creating event:', error);
       alert(error.message || 'Failed to create event');
     }
+  };
+
+  const handleFriendModalSuccess = async () => {
+    // Reload friends and pending requests after any friend action
+    await Promise.all([
+      loadExpenseFriends(),
+      loadPendingRequests(),
+    ]);
   };
 
   // Calculate balance summary
@@ -467,6 +535,40 @@ export default function ExpensesScreen() {
             >
               Events
             </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Friend Management Bar */}
+        <View style={styles.friendManagementBar}>
+          <TouchableOpacity
+            style={styles.friendAction}
+            onPress={() => setShowFriendsListModal(true)}
+          >
+            <Users size={20} color={colors.primary} />
+            <Text style={styles.friendActionText}>
+              My Friends ({expenseFriends.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.friendAction}
+            onPress={() => setShowFriendRequestsModal(true)}
+          >
+            <MessageSquare size={20} color={colors.primary} />
+            <Text style={styles.friendActionText}>Requests</Text>
+            {pendingRequestsCount > 0 && (
+              <View style={styles.requestsBadge}>
+                <Text style={styles.requestsBadgeText}>{pendingRequestsCount}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.friendAction, styles.addFriendButton]}
+            onPress={() => setShowAddFriendModal(true)}
+          >
+            <Plus size={20} color={colors.white} />
+            <Text style={styles.addFriendText}>Add Friend</Text>
           </TouchableOpacity>
         </View>
 
@@ -869,7 +971,11 @@ export default function ExpensesScreen() {
                 </Card>
               ) : (
                 events.map((event) => (
-                  <TouchableOpacity key={event.id} activeOpacity={0.7}>
+                  <TouchableOpacity
+                    key={event.id}
+                    activeOpacity={0.7}
+                    onPress={() => router.push(`/expenses/event/${event.id}`)}
+                  >
                     <Card style={styles.eventCard}>
                       <View style={styles.eventHeader}>
                         <View style={styles.eventIcon}>
@@ -924,6 +1030,25 @@ export default function ExpensesScreen() {
         currentUser={currentUserProfile}
         availableUsers={availableUsers}
       />
+
+      {/* Friend Management Modals */}
+      <AddExpenseFriendModal
+        visible={showAddFriendModal}
+        onClose={() => setShowAddFriendModal(false)}
+        onSuccess={handleFriendModalSuccess}
+      />
+
+      <ExpenseFriendRequestsModal
+        visible={showFriendRequestsModal}
+        onClose={() => setShowFriendRequestsModal(false)}
+        onSuccess={handleFriendModalSuccess}
+      />
+
+      <ExpenseFriendsListModal
+        visible={showFriendsListModal}
+        onClose={() => setShowFriendsListModal(false)}
+        onSuccess={handleFriendModalSuccess}
+      />
     </>
   );
 }
@@ -964,6 +1089,57 @@ const styles = StyleSheet.create({
   },
   tabTextActive: {
     color: colors.primary,
+    fontWeight: '600',
+  },
+  friendManagementBar: {
+    flexDirection: 'row',
+    backgroundColor: colors.white,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: spacing.sm,
+  },
+  friendAction: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderRadius: 8,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  friendActionText: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  requestsBadge: {
+    backgroundColor: colors.error,
+    borderRadius: 10,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: 2,
+    minWidth: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestsBadgeText: {
+    ...typography.caption,
+    color: colors.white,
+    fontWeight: '700',
+    fontSize: 10,
+  },
+  addFriendButton: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  addFriendText: {
+    ...typography.caption,
+    color: colors.white,
     fontWeight: '600',
   },
   content: {
